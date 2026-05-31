@@ -105,11 +105,210 @@ async function fetchStandings(season) {
 // ─── HTML fetch + table parse (no Puppeteer) ─────────────────────────────────
 async function fetchPage(url) {
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36' },
-    signal: AbortSignal.timeout(20000),
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': 'https://pgcbl.com/sports/bsb/2025-26/standings',
+    },
+    signal: AbortSignal.timeout(30000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   return res.text();
+}
+
+// ─── Parse a league-wide stats page — returns rows from the target table ─────
+// tableSelector: function(headers) => boolean — picks which table to use
+function parseLeaguePage(html, tableSelector) {
+  const tableMatches = html.match(/<table[\s\S]*?<\/table>/gi) || [];
+  for (const t of tableMatches) {
+    const rowMatches = t.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+    if (!rowMatches.length) continue;
+    const headerCells = (rowMatches[0].match(/<(?:th|td)[^>]*>([\s\S]*?)<\/(?:th|td)>/gi) || [])
+      .map(c => stripTags(c).toLowerCase().trim());
+    if (!tableSelector(headerCells)) continue;
+    const idx = {};
+    headerCells.forEach((h, i) => { idx[h] = i; });
+    const rows = rowMatches.slice(1).map(row => {
+      const cells = (row.match(/<(?:th|td)[^>]*>([\s\S]*?)<\/(?:th|td)>/gi) || [])
+        .map(c => { const t = stripTags(c); return t === '&nbsp;' || t === '-' ? '' : t.trim(); });
+      return cells;
+    }).filter(r => r.length > 3 && r[1]); // must have name
+    return { idx, rows };
+  }
+  return null;
+}
+
+// ─── League-wide hitter scraper ───────────────────────────────────────────────
+async function fetchLeagueHitters(season) {
+  const html = await fetchPage(
+    `https://pgcbl.com/sports/bsb/${season}/players?sort=avg&pos=h&r=0`
+  );
+  // Table 0: gp, ab, h, rbi, bb, 2b, 3b, hr, xbh, k, avg, obp, slg, hbp, pa
+  const result = parseLeaguePage(html, h => h.includes('avg') && h.includes('ab') && h.includes('obp'));
+  if (!result) return [];
+  const { idx, rows } = result;
+
+  // Table 1: gp, r, tb, sb, cs  — join for runs/SB
+  const result2 = (() => {
+    const tableMatches = html.match(/<table[\s\S]*?<\/table>/gi) || [];
+    // Find the second table that has 'sb' and 'r' but NOT 'avg'
+    for (const t of tableMatches) {
+      const rowMatches = t.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+      if (!rowMatches.length) continue;
+      const hc = (rowMatches[0].match(/<(?:th|td)[^>]*>([\s\S]*?)<\/(?:th|td)>/gi) || [])
+        .map(c => stripTags(c).toLowerCase().trim());
+      if (hc.includes('sb') && hc.includes('r') && !hc.includes('avg')) {
+        const ix = {};
+        hc.forEach((h, i) => { ix[h] = i; });
+        const rws = rowMatches.slice(1).map(row => {
+          return (row.match(/<(?:th|td)[^>]*>([\s\S]*?)<\/(?:th|td)>/gi) || [])
+            .map(c => { const t = stripTags(c); return t === '-' ? '' : t.trim(); });
+        }).filter(r => r.length > 3 && r[1]);
+        return { ix, rws };
+      }
+    }
+    return null;
+  })();
+
+  const sbMap = {};
+  if (result2) {
+    result2.rws.forEach(r => {
+      const name = r[result2.ix['name']] || '';
+      const team = r[result2.ix['team']] || '';
+      const key = `${name}|${team}`;
+      sbMap[key] = {
+        r:  parseInt2(r[result2.ix['r']])  ?? 0,
+        tb: parseInt2(r[result2.ix['tb']]) ?? 0,
+        sb: parseInt2(r[result2.ix['sb']]) ?? 0,
+        cs: parseInt2(r[result2.ix['cs']]) ?? 0,
+      };
+    });
+  }
+
+  const players = [];
+  for (const cells of rows) {
+    const name = cells[idx['name']] || '';
+    const team = cells[idx['team']] || '';
+    if (!name || !team) continue;
+    if (/^(total|opponent|opp\b)/i.test(name)) continue;
+    const ab  = parseFloat2(cells[idx['ab']]) ?? 0;
+    const pa  = parseInt2(cells[idx['pa']])   ?? 0;
+    if (ab < 1 && pa < 1) continue;
+
+    const extra = sbMap[`${name}|${team}`] || {};
+    players.push({
+      name,
+      team,
+      gp:  parseInt2(cells[idx['gp']])  ?? 0,
+      ab,
+      h:   parseInt2(cells[idx['h']])   ?? 0,
+      avg: parseFloat2(cells[idx['avg']]) ?? 0,
+      obp: parseFloat2(cells[idx['obp']]) ?? 0,
+      slg: parseFloat2(cells[idx['slg']]) ?? 0,
+      ops: parseFloat(((parseFloat2(cells[idx['obp']]) || 0) + (parseFloat2(cells[idx['slg']]) || 0)).toFixed(3)),
+      hr:  parseInt2(cells[idx['hr']])  ?? 0,
+      rbi: parseInt2(cells[idx['rbi']]) ?? 0,
+      bb:  parseInt2(cells[idx['bb']])  ?? 0,
+      k:   parseInt2(cells[idx['k']])   ?? 0,
+      hbp: parseInt2(cells[idx['hbp']]) ?? 0,
+      '2b': parseInt2(cells[idx['2b']]) ?? 0,
+      '3b': parseInt2(cells[idx['3b']]) ?? 0,
+      r:   extra.r  ?? 0,
+      sb:  extra.sb ?? 0,
+      cs:  extra.cs ?? 0,
+      tb:  extra.tb ?? 0,
+      pa,
+    });
+  }
+  return players;
+}
+
+// ─── League-wide pitcher scraper ──────────────────────────────────────────────
+async function fetchLeaguePitchers(season) {
+  const html = await fetchPage(
+    `https://pgcbl.com/sports/bsb/${season}/players?sort=era&pos=p&r=0`
+  );
+  // Table index 2: era, w, l, app, gs, sv, ip, h, r, er, bb, k, k/9, hr, whip, bf, wp, hbp
+  const result = parseLeaguePage(html, h => h.includes('era') && h.includes('ip') && h.includes('whip'));
+  if (!result) return [];
+  const { idx, rows } = result;
+
+  const players = [];
+  for (const cells of rows) {
+    const name = cells[idx['name']] || '';
+    const team = cells[idx['team']] || '';
+    if (!name || !team) continue;
+    if (/^(total|opponent|opp\b)/i.test(name)) continue;
+    const ip = parseFloat2(cells[idx['ip']]) ?? 0;
+    if (ip < 0) continue;
+
+    players.push({
+      name,
+      team,
+      gp:   parseInt2(cells[idx['app']]) ?? 0,
+      ip,
+      era:  parseFloat2(cells[idx['era']]) ?? 0,
+      whip: parseFloat2(cells[idx['whip']]) ?? null,
+      w:    parseInt2(cells[idx['w']])   ?? 0,
+      l:    parseInt2(cells[idx['l']])   ?? 0,
+      sv:   parseInt2(cells[idx['sv']])  ?? 0,
+      k:    parseInt2(cells[idx['k']])   ?? 0,
+      bb:   parseInt2(cells[idx['bb']])  ?? 0,
+      h:    parseInt2(cells[idx['h']])   ?? 0,
+      hr:   parseInt2(cells[idx['hr']])  ?? 0,
+      k9:   parseFloat2(cells[idx['k/9']]) ?? (ip > 0 ? parseFloat(((parseInt2(cells[idx['k']])||0) / ip * 9).toFixed(2)) : null),
+      bb9:  ip > 0 ? parseFloat(((parseInt2(cells[idx['bb']])||0) / ip * 9).toFixed(2)) : null,
+      bf:   parseInt2(cells[idx['bf']])  ?? 0,
+      wp:   parseInt2(cells[idx['wp']])  ?? 0,
+      hbp:  parseInt2(cells[idx['hbp']]) ?? 0,
+    });
+  }
+  return players;
+}
+
+// ─── Name enrichment — replace "F LastName" with full names from monospace template
+async function enrichNames(players, season) {
+  // Only enrich teams whose monospace template is known to work
+  const TMPL = 'tmpl=teaminfo-network-monospace-template';
+  const teamSlugs = [
+    { team: 'Batavia Muckdogs',      slug: 'bataviamuckdogs' },
+    { team: 'Elmira Pioneers',       slug: 'elmirapioneers' },
+    { team: 'Jamestown Tarp Skunks', slug: 'jamestowntarpskunks' },
+  ];
+  const nameMap = {}; // "last|team" -> "Full Name"
+
+  await Promise.allSettled(teamSlugs.map(async ({ team, slug }) => {
+    try {
+      const BASE = `https://pgcbl.com/sports/bsb/${season}/teams/${slug}`;
+      const [htmlH, htmlP] = await Promise.all([
+        fetchPage(`${BASE}?${TMPL}&sort=ab&pos=h`).catch(() => ''),
+        fetchPage(`${BASE}?${TMPL}&sort=era&pos=p`).catch(() => ''),
+      ]);
+      for (const html of [htmlH, htmlP]) {
+        const h = parseHitters(html, team).concat(parsePitchers(html, team));
+        h.forEach(p => {
+          const lastName = p.name.split(/\s+/).slice(-1)[0].toLowerCase();
+          nameMap[`${lastName}|${team}`] = p.name;
+        });
+      }
+    } catch(e) {}
+  }));
+
+  // Apply enrichment
+  return players.map(p => {
+    const initial = (p.name.match(/^([A-Z])\s+/) || [])[1] || '';
+    const lastName = p.name.split(/\s+/).slice(-1)[0].toLowerCase();
+    const key = `${lastName}|${p.team}`;
+    const fullName = nameMap[key];
+    if (fullName) {
+      // Only replace if initial matches
+      if (!initial || fullName.startsWith(initial)) {
+        return { ...p, name: fullName };
+      }
+    }
+    return p;
+  });
 }
 
 function stripTags(s) {
@@ -342,31 +541,36 @@ function parsePitchers(html, teamName) {
   return players;
 }
 
-// ─── Main stats fetch ─────────────────────────────────────────────────────────
+// ─── Main stats fetch — league-wide scraping ──────────────────────────────────
 async function fetchAllStats() {
   const cached = cache.get('stats');
   if (cached) return cached;
 
-  console.log('Fetching PGCBL stats via fetch (no Puppeteer)…');
+  console.log('Fetching PGCBL stats via league-wide pages…');
   const season = getSeason();
 
-  const [results, standings, pitchCounts] = await Promise.all([
-    Promise.allSettled(TEAMS.map(t => fetchTeamStats(t.name, t.slug, season, t.slugAlt))),
+  // Fetch all data in parallel: league hitters, league pitchers, standings, Batavia pitch counts
+  const [hitterRes, pitcherRes, standingsRes, pitchCountRes] = await Promise.allSettled([
+    fetchLeagueHitters(season),
+    fetchLeaguePitchers(season),
     fetchStandings(season),
     fetchBoxScorePitchCounts(season),
   ]);
 
-  const allHitters = [], allPitchers = [];
-  results.forEach((r, i) => {
-    if (r.status === 'fulfilled') {
-      allHitters.push(...r.value.hitters);
-      allPitchers.push(...r.value.pitchers);
-    } else {
-      console.error(`${TEAMS[i].name}: ${r.reason?.message}`);
-    }
-  });
+  let allHitters = hitterRes.status === 'fulfilled' ? hitterRes.value : [];
+  let allPitchers = pitcherRes.status === 'fulfilled' ? pitcherRes.value : [];
+  const standings = standingsRes.status === 'fulfilled' ? standingsRes.value : [];
+  const pitchCounts = pitchCountRes.status === 'fulfilled' ? pitchCountRes.value : {};
 
-  // Real league averages from qualified pitchers (lower threshold early in season)
+  console.log(`Raw scrape: ${allHitters.length} hitters, ${allPitchers.length} pitchers`);
+
+  // Enrich "F LastName" → full names for teams with working monospace templates
+  [allHitters, allPitchers] = await Promise.all([
+    enrichNames(allHitters, season),
+    enrichNames(allPitchers, season),
+  ]);
+
+  // League averages from qualified pitchers
   const qualified = allPitchers.filter(p => p.ip >= 2);
   const totalIP   = qualified.reduce((s, p) => s + p.ip, 0);
   const totalK    = qualified.reduce((s, p) => s + p.k, 0);
@@ -375,36 +579,26 @@ async function fetchAllStats() {
   const laWhip = totalIP > 0 ? parseFloat(((totalH + totalBB) / totalIP).toFixed(3)) : 1.37;
   const laK9   = totalIP > 0 ? parseFloat((totalK / totalIP * 9).toFixed(2))         : 8.21;
 
-  // Build Batavia pitcher name set for filtering pitch counts
-  // Also include any pitcher in pitchCounts that doesn't appear in the opponent's stats
-  // Strategy: keep only names that appear in Batavia's hitters+pitchers roster
-  const bataviaRoster = new Set([
-    ...allHitters.filter(p => p.team === 'Batavia Muckdogs').map(p => p.name),
-    ...allPitchers.filter(p => p.team === 'Batavia Muckdogs').map(p => p.name),
-  ]);
-  // Filter pitchCounts: remove 'Totals'/aggregate rows, keep only Batavia players
-  const filteredPitchCounts = {};
+  // Attach pitch history to Batavia pitchers
+  // Match by last name since pitch counts come from box score text
+  const pitchCountFiltered = {};
   Object.entries(pitchCounts).forEach(([name, outings]) => {
     if (!name || /^total/i.test(name) || name.length < 3) return;
-    // Accept if in Batavia roster, or if not found in ANY team's roster (new pitcher with 0 IP)
-    const inAnyRoster = allPitchers.some(p => p.name === name) || allHitters.some(p => p.name === name);
-    if (bataviaRoster.has(name) || !inAnyRoster) {
-      filteredPitchCounts[name] = outings;
-    }
+    pitchCountFiltered[name] = outings;
   });
 
-  // Attach per-game pitch history to Batavia pitchers
   allPitchers.forEach(p => {
-    if (p.team === 'Batavia Muckdogs' && filteredPitchCounts[p.name]) {
-      p.pitchHistory = filteredPitchCounts[p.name].sort((a,b) => (a.date||'') > (b.date||'') ? 1 : -1);
-    }
+    if (p.team !== 'Batavia Muckdogs') return;
+    const lastName = p.name.split(/\s+/).slice(-1)[0];
+    const match = pitchCountFiltered[p.name] || pitchCountFiltered[lastName];
+    if (match) p.pitchHistory = match.sort((a,b) => (a.date||'') > (b.date||'') ? 1 : -1);
   });
 
   const result = {
-    hitters:   allHitters,
-    pitchers:  allPitchers,
+    hitters:     allHitters,
+    pitchers:    allPitchers,
     standings,
-    pitchCounts: filteredPitchCounts,  // Batavia-only pitch counts to auto-seed availability tab
+    pitchCounts: pitchCountFiltered,
     season,
     laWhip:    (isNaN(laWhip) || laWhip < 0.5 || laWhip > 2.5) ? 1.37 : laWhip,
     laK9:      (isNaN(laK9)   || laK9   < 4   || laK9   > 14)  ? 8.21 : laK9,
