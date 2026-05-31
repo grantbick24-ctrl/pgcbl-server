@@ -49,16 +49,17 @@ function getSeason() {
 }
 
 // ─── Teams ────────────────────────────────────────────────────────────────────
+// slugAlt = alternate slug to try if primary fails (empty string = none)
 const TEAMS = [
-  { name: 'Auburn Doubledays',       slug: 'auburndoubledays' },
-  { name: 'Batavia Muckdogs',        slug: 'bataviamuckdogs' },
-  { name: 'Elmira Pioneers',         slug: 'elmirapioneers' },
-  { name: 'Geneva Red Wings',        slug: 'genevaredwings' },
-  { name: 'Jamestown Tarp Skunks',   slug: 'jamestowntarpskunks' },
-  { name: 'Newark Pilots',           slug: 'newarkpilots' },
-  { name: 'Niagara Falls Americans', slug: 'niagarafallsamericans' },
-  { name: 'Niagara Ironbacks',       slug: 'niagaraironbacks' },
-  { name: 'Olean Oilers',            slug: 'oleanoilers' },
+  { name: 'Auburn Doubledays',       slug: 'auburndoubledays',       slugAlt: 'auburn-doubledays' },
+  { name: 'Batavia Muckdogs',        slug: 'bataviamuckdogs',        slugAlt: 'batavia-muckdogs' },
+  { name: 'Elmira Pioneers',         slug: 'elmirapioneers',         slugAlt: 'elmira-pioneers' },
+  { name: 'Geneva Red Wings',        slug: 'genevaredwings',         slugAlt: 'geneva-red-wings' },
+  { name: 'Jamestown Tarp Skunks',   slug: 'jamestowntarpskunks',    slugAlt: 'jamestown-tarp-skunks' },
+  { name: 'Newark Pilots',           slug: 'newarkpilots',           slugAlt: 'newark-pilots' },
+  { name: 'Niagara Falls Americans', slug: 'niagarafallsamericans',  slugAlt: 'niagara-falls-americans' },
+  { name: 'Niagara Ironbacks',       slug: 'niagaraironbacks',       slugAlt: 'niagara-ironbacks' },
+  { name: 'Olean Oilers',            slug: 'oleanoilers',            slugAlt: 'olean-oilers' },
 ];
 
 // ─── Standings scraper ────────────────────────────────────────────────────────
@@ -200,19 +201,58 @@ async function fetchBoxScorePitchCounts(season) {
   }
 }
 
-async function fetchTeamStats(teamName, slug, season) {
-  // Single print-page request per stat type gives all players in one table
-  const BASE = `https://pgcbl.com/sports/bsb/${season}/teams/${slug}`;
+async function fetchTeamStats(teamName, slug, season, slugAlt) {
+  // Try primary slug first, then alternate slug if primary returns tiny response
   const TMPL = 'tmpl=teaminfo-network-monospace-template';
 
-  const [htmlH, htmlP] = await Promise.all([
-    fetchPage(`${BASE}?${TMPL}&sort=ab&pos=h`).catch(() => ''),
-    fetchPage(`${BASE}?${TMPL}&sort=era&pos=p`).catch(() => ''),
-  ]);
+  async function trySlug(s) {
+    const BASE = `https://pgcbl.com/sports/bsb/${season}/teams/${s}`;
+    const [htmlH, htmlP] = await Promise.all([
+      fetchPage(`${BASE}?${TMPL}&sort=ab&pos=h`).catch(() => ''),
+      fetchPage(`${BASE}?${TMPL}&sort=era&pos=p`).catch(() => ''),
+    ]);
+    const hitters  = parseHitters(htmlH,  teamName);
+    const pitchers = parsePitchers(htmlP, teamName);
+    return { hitters, pitchers, htmlH, htmlP };
+  }
 
-  const hitters  = parseHitters(htmlH,  teamName);
-  const pitchers = parsePitchers(htmlP, teamName);
-  return { hitters, pitchers };
+  let result = await trySlug(slug);
+
+  // If primary returned no players but we got tiny responses, try alternate slug
+  if (result.hitters.length === 0 && result.pitchers.length === 0 && slugAlt) {
+    const hSize = result.htmlH.length, pSize = result.htmlP.length;
+    if (hSize < 2000 || pSize < 2000) {
+      console.log(`${teamName}: primary slug '${slug}' returned ${hSize}/${pSize} bytes — trying '${slugAlt}'`);
+      result = await trySlug(slugAlt);
+    }
+  }
+
+  // If still no data, try fetching the plain team page and scraping tables from it
+  if (result.hitters.length === 0 && result.pitchers.length === 0) {
+    try {
+      const BASE = `https://pgcbl.com/sports/bsb/${season}/teams/${slug}`;
+      const [htmlH2, htmlP2] = await Promise.all([
+        fetchPage(`${BASE}?view=hitting`).catch(() => ''),
+        fetchPage(`${BASE}?view=pitching`).catch(() => ''),
+      ]);
+      result.hitters  = parseHitters(htmlH2,  teamName);
+      result.pitchers = parsePitchers(htmlP2, teamName);
+      if (result.hitters.length === 0 && result.pitchers.length === 0) {
+        // Try the stats page directly
+        const htmlS = await fetchPage(`${BASE}?view=stats`).catch(() => '');
+        result.hitters  = parseHitters(htmlS,  teamName);
+        result.pitchers = parsePitchers(htmlS, teamName);
+      }
+    } catch(e) {}
+  }
+
+  if (result.hitters.length || result.pitchers.length) {
+    console.log(`${teamName} [${slug}]: ${result.pitchers.length} pitchers, ${result.hitters.length} hitters`);
+  } else {
+    console.warn(`${teamName} [${slug}]: NO DATA — may not have played yet`);
+  }
+
+  return { hitters: result.hitters, pitchers: result.pitchers };
 }
 
 function parseHitters(html, teamName) {
@@ -230,7 +270,7 @@ function parseHitters(html, teamName) {
       if (/^(total|opponent|opp\b)/i.test(name) || /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(name)) continue;
 
       const ab  = parseFloat2(cells[idx['ab']]) ?? 0;
-      if (ab < 1) continue;
+      if (ab < 1 && (parseInt2(cells[idx['pa']]) ?? 0) < 1) continue;
 
       const h   = parseInt2(cells[idx['h']])   ?? 0;
       const bb  = parseInt2(cells[idx['bb']])  ?? 0;
@@ -274,7 +314,8 @@ function parsePitchers(html, teamName) {
       if (/^(total|opponent|opp\b)/i.test(name) || /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(name)) continue;
 
       const ip = parseFloat2(cells[idx['ip']]) ?? 0;
-      if (ip < 0.1) continue;
+      // Keep pitchers with any appearance (even 0 IP recorded — e.g. ejected)
+      if (ip < 0 || cells.every(c => !c)) continue;
 
       const h  = parseInt2(cells[idx['h']])  ?? 0;
       const bb = parseInt2(cells[idx['bb']]) ?? 0;
@@ -310,7 +351,7 @@ async function fetchAllStats() {
   const season = getSeason();
 
   const [results, standings, pitchCounts] = await Promise.all([
-    Promise.allSettled(TEAMS.map(t => fetchTeamStats(t.name, t.slug, season))),
+    Promise.allSettled(TEAMS.map(t => fetchTeamStats(t.name, t.slug, season, t.slugAlt))),
     fetchStandings(season),
     fetchBoxScorePitchCounts(season),
   ]);
@@ -546,6 +587,41 @@ app.post('/api/refresh', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─── Debug: test each team URL from Railway's IP ─────────────────────────────
+app.get('/api/debug/teams', async (req, res) => {
+  const season = getSeason();
+  const TMPL = 'tmpl=teaminfo-network-monospace-template';
+  const results = await Promise.allSettled(TEAMS.map(async ({ name, slug, slugAlt }) => {
+    const BASE = `https://pgcbl.com/sports/bsb/${season}/teams/${slug}`;
+    const BASE2 = slugAlt ? `https://pgcbl.com/sports/bsb/${season}/teams/${slugAlt}` : null;
+    const [hRes, pRes] = await Promise.allSettled([
+      fetchPage(`${BASE}?${TMPL}&sort=ab&pos=h`),
+      fetchPage(`${BASE}?${TMPL}&sort=era&pos=p`),
+    ]);
+    const hSize = hRes.status === 'fulfilled' ? hRes.value.length : 0;
+    const pSize = pRes.status === 'fulfilled' ? pRes.value.length : 0;
+    const hParsed = hRes.status === 'fulfilled' ? parseHitters(hRes.value, name).length : 0;
+    const pParsed = pRes.status === 'fulfilled' ? parsePitchers(pRes.value, name).length : 0;
+
+    let altResult = null;
+    if ((hParsed === 0 && pParsed === 0) && BASE2) {
+      const [hAlt, pAlt] = await Promise.allSettled([
+        fetchPage(`${BASE2}?${TMPL}&sort=ab&pos=h`),
+        fetchPage(`${BASE2}?${TMPL}&sort=era&pos=p`),
+      ]);
+      altResult = {
+        hSize: hAlt.status === 'fulfilled' ? hAlt.value.length : 0,
+        pSize: pAlt.status === 'fulfilled' ? pAlt.value.length : 0,
+        hParsed: hAlt.status === 'fulfilled' ? parseHitters(hAlt.value, name).length : 0,
+        pParsed: pAlt.status === 'fulfilled' ? parsePitchers(pAlt.value, name).length : 0,
+      };
+    }
+
+    return { name, slug, slugAlt, hSize, pSize, hParsed, pParsed, altResult };
+  }));
+  res.json(results.map(r => r.status === 'fulfilled' ? r.value : { error: r.reason?.message }));
 });
 
 app.get('/api/scoreboard', async (req, res) => {
