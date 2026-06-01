@@ -414,8 +414,14 @@ async function scrapePitchers(season, br) {
 async function scrapeRosters(season, br) {
   logScrape('Scraping rosters...');
   for (const team of TEAMS) {
-    const html = await getPageHTML(`https://pgcbl.com/sports/bsb/${season}/teams/${team.slug}?view=lineup`, br);
-    const tables = parseHTMLTables(html);
+    // Scrape both lineup (hitters) and roster (full team including pitchers)
+    const views = ['lineup', 'roster'];
+    const allTables = [];
+    for (const view of views) {
+      const html = await getPageHTML(`https://pgcbl.com/sports/bsb/${season}/teams/${team.slug}?view=${view}`, br);
+      allTables.push(...parseHTMLTables(html));
+    }
+    const tables = allTables;
     let saved = 0;
 
     // Find the header row first (from the header-only table)
@@ -427,6 +433,10 @@ async function scrapeRosters(season, br) {
     }
     const idx = Object.fromEntries(colHeaders.map((h,i) => [h,i]));
     const nameCol = idx['name']??idx['player']??1; // default col 1 (after jersey #)
+
+    // Always clear old roster for this team before scraping (removes stale/bad rows
+    // from previous scrapes regardless of whether new data is found)
+    if (pg) await pg.query(`DELETE FROM rosters WHERE season=$1 AND team=$2`, [season, team.name]).catch(()=>{});
 
     // Now find the data table — either same table with rows, or the DataTables body table
     for (const { headers, rows } of tables) {
@@ -448,7 +458,11 @@ async function scrapeRosters(season, br) {
           `INSERT INTO rosters(season,team,player_name,number,position,player_year,hometown)
            VALUES($1,$2,$3,$4,$5,$6,$7)
            ON CONFLICT(season,team,player_name) DO UPDATE SET
-             number=$4,position=$5,player_year=$6,hometown=$7,updated_at=NOW()`,
+             number=COALESCE(NULLIF($4,''),rosters.number),
+             position=COALESCE(NULLIF($5,''),rosters.position),
+             player_year=COALESCE(NULLIF($6,''),rosters.player_year),
+             hometown=COALESCE(NULLIF($7,''),rosters.hometown),
+             updated_at=NOW()`,
           [season, team.name, name,
            r[idx['#']??idx['no']??idx['num']??0]||'',
            r[idx['pos']??idx['position']??3]||'',
@@ -458,7 +472,6 @@ async function scrapeRosters(season, br) {
         ).catch(() => {});
         saved++;
       }
-      if (saved) break;
     }
     logScrape(`  ${team.name}: ${saved} players`);
   }
@@ -521,6 +534,8 @@ async function scrapePitchCounts(season, br) {
   }
 
   if (!pg) return;
+  // Clean up any stale rows with uncleaned names (parens from W/L decisions)
+  await pg.query(`DELETE FROM pitch_availability WHERE pitcher_name ~ '\\([WLS],?'`).catch(()=>{});
   let saved = 0;
   for (const [name, d] of Object.entries(pitchMap)) {
     await pg.query(
@@ -617,20 +632,38 @@ async function assembleStats() {
   if (!pg) return null;
   const season = getSeason();
 
-  const [standR, hitR, pitR, pavR, lastScrape, scrapeErr] = await Promise.all([
+  const [standR, hitR, pitR, pavR, rostR, lastScrape, scrapeErr] = await Promise.all([
     pg.query('SELECT * FROM standings  WHERE season=$1 ORDER BY rank', [season]),
     pg.query('SELECT * FROM hitter_stats  WHERE season=$1 AND ab >= 1 ORDER BY avg DESC', [season]),
     pg.query('SELECT * FROM pitcher_stats WHERE season=$1 AND ip >= 0.1 ORDER BY era ASC', [season]),
     pg.query("SELECT * FROM pitch_availability WHERE season=$1 AND team='Batavia Muckdogs'", [season]),
+    pg.query('SELECT team, player_name, number FROM rosters WHERE season=$1', [season]),
     getMetaValue('last_scrape'),
     getMetaValue('last_scrape_error'),
   ]);
+
+  // Build roster number lookup: { team: { lastName: number } }
+  const rosterNums = {};
+  for (const r of rostR.rows) {
+    if (!r.number) continue;
+    if (!rosterNums[r.team]) rosterNums[r.team] = {};
+    const lastName = r.player_name.split(' ').slice(-1)[0].toLowerCase();
+    rosterNums[r.team][lastName] = r.number;
+    rosterNums[r.team][r.player_name.toLowerCase()] = r.number; // full name fallback
+  }
+  const getNum = (name, team) => {
+    const m = rosterNums[team];
+    if (!m) return '';
+    const lastName = name.split(' ').slice(-1)[0].toLowerCase();
+    return m[name.toLowerCase()] || m[lastName] || '';
+  };
 
   const hitters = hitR.rows.map(r => ({
     name: r.name, team: r.team, gp: r.gp, ab: +r.ab, h: r.h,
     avg: +r.avg, obp: +r.obp, slg: +r.slg, ops: +r.ops,
     hr: r.hr, rbi: r.rbi, bb: r.bb, k: r.k,
     doubles: r.doubles, triples: r.triples,
+    number: getNum(r.name, r.team),
   }));
 
   const pitchers = pitR.rows.map(r => ({
@@ -638,6 +671,7 @@ async function assembleStats() {
     whip: +r.whip, k: r.k, bb: r.bb, h: r.h, w: r.w, sv: r.sv,
     k9: +r.k9,
     bb9: r.ip > 0 ? parseFloat((r.bb / r.ip * 9).toFixed(2)) : 0,
+    number: getNum(r.name, r.team),
   }));
 
   // Pitch counts from DB (most recent outing per Batavia pitcher)
@@ -873,6 +907,121 @@ app.post('/api/parse-sheet', async (req, res) => {
     console.error('parse-sheet:', e.message);
     res.json({ batters:[] });
   }
+});
+
+// ─── Standings (individual endpoint) ─────────────────────────────────────────
+app.get('/api/standings', async (req, res) => {
+  if (!pg) return res.json([]);
+  try {
+    const season = getSeason();
+    const { rows } = await pg.query('SELECT * FROM standings WHERE season=$1 ORDER BY rank', [season]);
+    res.json(rows.map(r => ({
+      name: r.name, w: r.w, l: r.l, t: r.t,
+      pct: +r.pct, gb: r.gb, streak: r.streak, last10: r.last10,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Hitters (individual endpoint) ───────────────────────────────────────────
+app.get('/api/hitters', async (req, res) => {
+  if (!pg) return res.json([]);
+  try {
+    const season = getSeason();
+    const { rows } = await pg.query(
+      'SELECT * FROM hitter_stats WHERE season=$1 AND ab >= 1 ORDER BY avg DESC', [season]
+    );
+    res.json(rows.map(r => ({
+      name: r.name, team: r.team, gp: r.gp, ab: +r.ab, h: r.h,
+      avg: +r.avg, obp: +r.obp, slg: +r.slg, ops: +r.ops,
+      hr: r.hr, rbi: r.rbi, bb: r.bb, k: r.k,
+      doubles: r.doubles, triples: r.triples,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Pitchers (individual endpoint) ──────────────────────────────────────────
+app.get('/api/pitchers', async (req, res) => {
+  if (!pg) return res.json([]);
+  try {
+    const season = getSeason();
+    const { rows } = await pg.query(
+      'SELECT * FROM pitcher_stats WHERE season=$1 AND ip >= 0.1 ORDER BY era ASC', [season]
+    );
+    res.json(rows.map(r => ({
+      name: r.name, team: r.team, gp: r.app, ip: +r.ip, era: +r.era,
+      whip: +r.whip, k: r.k, bb: r.bb, h: r.h, w: r.w, sv: r.sv, k9: +r.k9,
+      bb9: r.ip > 0 ? parseFloat((r.bb / r.ip * 9).toFixed(2)) : 0,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Box scores (individual endpoint) ────────────────────────────────────────
+app.get('/api/boxscores', async (req, res) => {
+  if (!pg) return res.json([]);
+  try {
+    const season = getSeason();
+    const { rows } = await pg.query(
+      'SELECT * FROM box_scores WHERE season=$1 ORDER BY game_date DESC LIMIT 30', [season]
+    );
+    res.json(rows.map(r => ({
+      gameId:    r.game_id,
+      home:      r.home_team,
+      away:      r.away_team,
+      homeScore: r.home_score,
+      awayScore: r.away_score,
+      date:      r.game_date?.toISOString?.().slice(0,10) || null,
+      status:    r.status === 'F' ? 'Final' : r.status,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Pitch availability (pre-calculated GREEN/YELLOW/RED) ────────────────────
+//  Rules match Dewey's calcPitchAvailability():
+//   0-15p → GREEN (0 rest), 16-25p → YELLOW→GREEN (1), 26-30p → RED→GREEN (2),
+//   31-40p → RED→YELLOW→GREEN (3), 41-60p → RED(3)→YELLOW→GREEN (4),
+//   61-70p → RED(4)→YELLOW→GREEN (5), 71+p → RED(5)→GREEN no yellow
+function calcAvailStatus(pitches, daysSince) {
+  if (pitches <= 15) return { status: 'GREEN', restNeeded: 0 };
+  if (pitches <= 25) return { status: daysSince >= 1 ? 'GREEN' : 'YELLOW', restNeeded: 1 };
+  if (pitches <= 30) return { status: daysSince >= 2 ? 'GREEN' : 'RED',    restNeeded: 2 };
+  if (pitches <= 40) return { status: daysSince >= 3 ? 'GREEN' : daysSince >= 2 ? 'YELLOW' : 'RED', restNeeded: 3 };
+  if (pitches <= 60) return { status: daysSince >= 4 ? 'GREEN' : daysSince >= 3 ? 'YELLOW' : 'RED', restNeeded: 4 };
+  if (pitches <= 70) return { status: daysSince >= 5 ? 'GREEN' : daysSince >= 4 ? 'YELLOW' : 'RED', restNeeded: 5 };
+  return { status: daysSince >= 5 ? 'GREEN' : 'RED', restNeeded: 5 }; // 71+ no yellow
+}
+
+app.get('/api/availability', async (req, res) => {
+  if (!pg) return res.json([]);
+  try {
+    const season = getSeason();
+    const { rows } = await pg.query(
+      "SELECT * FROM pitch_availability WHERE season=$1 AND team='Batavia Muckdogs'", [season]
+    );
+    const today = new Date();
+    today.setHours(12, 0, 0, 0); // midday anchor to avoid TZ edge cases
+    const result = rows
+      .filter(r => r.last_outing_pitches > 0 && r.last_outing_date)
+      .map(r => {
+        const lastDate = new Date(r.last_outing_date);
+        lastDate.setHours(12, 0, 0, 0);
+        const daysSince = Math.max(0, Math.floor((today - lastDate) / 86400000));
+        const pitches   = r.last_outing_pitches;
+        const { status, restNeeded } = calcAvailStatus(pitches, daysSince);
+        return {
+          name:         r.pitcher_name,
+          team:         r.team,
+          status,
+          pitches,
+          ip:           +r.last_outing_ip,
+          lastDate:     r.last_outing_date?.toISOString?.().slice(0,10) || null,
+          daysSince,
+          restNeeded,
+          daysRemaining: Math.max(0, restNeeded - daysSince),
+        };
+      })
+      .sort((a, b) => ({ RED:0, YELLOW:1, GREEN:2 }[a.status]??3) - ({ RED:0, YELLOW:1, GREEN:2 }[b.status]??3));
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
