@@ -1,0 +1,1818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Dawg Data">
+<meta name="theme-color" content="#0a0a0a">
+<title>Dawg Data</title>
+<style>
+:root{
+  --red:#c8102e;--red-l:#e8273e;--bg:#0a0a0a;--g9:#111;--g8:#1a1a1a;
+  --g7:#222;--g6:#333;--g5:#555;--g4:#888;--g3:#aaa;--g1:#ddd;
+  --white:#fff;--green:#4cd964;--yellow:#ffd60a;
+  --safe-b:env(safe-area-inset-bottom,0px);--safe-t:env(safe-area-inset-top,0px);
+  --p-dg:#14532d;--p-g:#166534;--p-a:#78350f;--p-o:#7c2d12;--p-r:#7f1d1d;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;height:-webkit-fill-available;background:var(--bg);color:var(--white);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100vh;height:100dvh;min-height:-webkit-fill-available}
+
+/* Header */
+#hdr{background:var(--g9);border-bottom:2px solid var(--red);padding:14px 16px 12px;padding-top:calc(14px + var(--safe-t));display:flex;align-items:center;gap:10px;flex-shrink:0}
+#back-btn{display:none;background:var(--g7);border:none;color:var(--white);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+#back-btn.show{display:block}
+#hdr-title{font-size:20px;font-weight:800;letter-spacing:-.5px;flex:1}
+#hdr-title span{color:var(--red)}
+#hdr-sub{font-size:11px;color:var(--g4);margin-top:1px}
+.rfbtn{background:none;border:1px solid var(--g6);color:var(--g3);border-radius:8px;padding:5px 10px;font-size:11px;cursor:pointer;flex-shrink:0}
+
+/* Tabs */
+#content{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#tabs{display:flex;background:var(--g9);border-top:1px solid var(--g7);padding-bottom:var(--safe-b);flex-shrink:0;min-height:56px}
+.tb{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px 2px;background:none;border:none;color:var(--g4);font-size:8px;font-weight:600;letter-spacing:.2px;text-transform:uppercase;cursor:pointer;min-width:0;overflow:hidden}
+.tb svg{width:20px;height:20px;stroke:currentColor;fill:none;flex-shrink:0}
+.tb.on{color:var(--red)}
+
+/* Views */
+.view{display:none;padding:14px}
+.view.on{display:block}
+
+/* Cards */
+.card{background:var(--g8);border-radius:12px;border:1px solid var(--g7);margin-bottom:12px;overflow:hidden}
+.card-hdr{background:var(--g7);padding:9px 14px;font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--g3);display:flex;justify-content:space-between;align-items:center}
+.card-body{padding:12px 14px}
+
+/* Standings */
+.srow{display:flex;align-items:center;padding:9px 14px;border-bottom:1px solid var(--g7)}
+.srow:last-child{border-bottom:none}
+.srow-rank{width:22px;color:var(--g5);font-size:12px}
+.srow-name{flex:1;font-size:14px;font-weight:600}
+.srow-name.dogs{color:var(--red)}
+.srow-stat{width:36px;text-align:center;font-size:12px;color:var(--g3)}
+
+/* Team buttons */
+.team-btn{display:flex;align-items:center;justify-content:space-between;background:var(--g8);border:1px solid var(--g7);border-radius:12px;padding:14px 16px;margin-bottom:10px;cursor:pointer;width:100%;text-align:left}
+.team-btn:active{opacity:.75}
+.team-btn .tn{font-size:15px;font-weight:700}
+.team-btn .tn.dogs{color:var(--red)}
+.team-btn .ta{font-size:11px;color:var(--g4);margin-top:2px}
+
+/* Roster */
+.roster-label{font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--g4);margin-bottom:8px;padding-left:2px}
+.roster-sect{margin-bottom:18px}
+.player-row{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--g7);cursor:pointer;background:var(--g8)}
+.player-row:first-child{border-radius:12px 12px 0 0}
+.player-row:last-child{border-radius:0 0 12px 12px;border-bottom:none}
+.player-row:only-child{border-radius:12px;border-bottom:none}
+.player-row:active{background:var(--g7)}
+.player-row .pname{flex:1;font-size:14px;font-weight:600}
+.player-row .pstats{display:flex;gap:10px}
+.player-row .ps .v{font-size:13px;font-weight:700;text-align:center}
+.player-row .ps .l{font-size:9px;color:var(--g4);letter-spacing:.3px;text-transform:uppercase;text-align:center}
+
+/* Probability matrix */
+.pmx{border-collapse:collapse;font-size:11px;min-width:100%}
+.pmx th{padding:5px 6px;color:var(--g4);font-size:9px;font-weight:700;text-align:center;white-space:nowrap;border-bottom:1px solid var(--g7)}
+.pmx th:first-child{text-align:left;min-width:72px}
+.pmx td{padding:7px 5px;text-align:center;font-weight:700;font-size:12px;min-width:46px;border:1px solid rgba(255,255,255,.04)}
+.pmx td:first-child{text-align:left;color:var(--g3);font-weight:600;font-size:11px;white-space:nowrap;border-left:none}
+.c-dg{background:#14532d;color:#86efac}
+.c-g{background:#166534;color:#bbf7d0}
+.c-a{background:#78350f;color:#fde68a}
+.c-o{background:#7c2d12;color:#fed7aa}
+.c-r{background:#7f1d1d;color:#fecaca}
+
+/* Forms */
+.fg{margin-bottom:13px}
+.fl{display:block;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--g3);margin-bottom:5px}
+.fi,.fsel,.fta{width:100%;background:var(--g7);border:1px solid var(--g6);border-radius:10px;padding:11px 14px;font-size:15px;color:var(--white);outline:none;-webkit-appearance:none;appearance:none;font-family:inherit}
+.fi:focus,.fsel:focus,.fta:focus{border-color:var(--red)}
+.fsel{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;padding-right:36px}
+.fta{resize:none;line-height:1.5}
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* Photo upload */
+.phzone{border:2px dashed var(--g6);border-radius:12px;padding:20px 16px;text-align:center;cursor:pointer}
+.phzone:active{border-color:var(--red)}
+.phzone p{color:var(--g4);font-size:12px;margin-top:5px}
+.phzone p strong{color:var(--g3)}
+.ph-grid{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.ph-thumb{position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;flex-shrink:0}
+.ph-thumb img{width:100%;height:100%;object-fit:cover;cursor:pointer}
+.ph-rm{position:absolute;top:2px;right:2px;background:rgba(0,0,0,.8);border:none;color:#fff;border-radius:50%;width:20px;height:20px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+
+/* Notes timeline */
+.note-card{background:var(--g7);border-radius:10px;padding:12px;margin-bottom:8px;border-left:3px solid var(--red)}
+.note-ts{font-size:10px;color:var(--g4);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+.note-ts .edited{font-style:italic;opacity:.7}
+.note-text{font-size:14px;line-height:1.55;color:var(--white);white-space:pre-wrap;word-break:break-word}
+.note-actions{display:flex;gap:6px;margin-top:8px}
+.note-edit-ta{width:100%;background:var(--g6);border:1px solid var(--red);border-radius:8px;padding:10px;font-size:14px;color:var(--white);outline:none;font-family:inherit;resize:none;line-height:1.5;margin-top:8px}
+
+/* Modal */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:200;align-items:flex-end}
+.overlay.open{display:flex}
+.modal{background:var(--g8);border-radius:20px 20px 0 0;border-top:2px solid var(--red);width:100%;max-height:94dvh;max-height:94vh;overflow-y:auto;padding:20px 16px;padding-bottom:calc(24px + var(--safe-b))}
+.mhdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+.mtitle{font-size:18px;font-weight:800;flex:1;line-height:1.2}
+.msub{font-size:12px;color:var(--g4);margin-top:2px}
+.mclose{background:var(--g7);border:none;color:var(--g3);border-radius:50%;width:30px;height:30px;font-size:18px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:10px}
+
+/* Stat chips */
+.stat-chip{background:var(--g7);border-radius:8px;padding:5px 10px;min-width:44px;text-align:center}
+.stat-chip .lbl{font-size:9px;color:var(--g4);text-transform:uppercase;letter-spacing:.4px}
+.stat-chip .val{font-size:14px;font-weight:700}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:11px 18px;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer}
+.btn:active{opacity:.75}
+.btn-p{background:var(--red);color:var(--white)}
+.btn-s{background:var(--g7);color:var(--white)}
+.btn-sm{padding:7px 12px;font-size:12px;border-radius:8px}
+.btn-xs{padding:4px 9px;font-size:11px;border-radius:6px;font-weight:600}
+.btn-bl{width:100%;justify-content:center}
+
+/* Pills */
+.pill{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px}
+.pill-r{background:rgba(200,16,46,.2);color:var(--red-l);border:1px solid rgba(200,16,46,.4)}
+.pill-g{background:rgba(76,217,100,.15);color:var(--green);border:1px solid rgba(76,217,100,.3)}
+.pill-y{background:rgba(255,214,10,.15);color:var(--yellow);border:1px solid rgba(255,214,10,.3)}
+.pill-gr{background:var(--g7);color:var(--g3);border:1px solid var(--g6)}
+
+/* Reports list */
+.rep-card{background:var(--g8);border-radius:12px;border:1px solid var(--g7);padding:13px;margin-bottom:10px;cursor:pointer}
+.rep-card:active{opacity:.8}
+
+/* Utils */
+.mt8{margin-top:8px}.mt12{margin-top:12px}.mb8{margin-bottom:8px}.mb12{margin-bottom:12px}
+.flex-bc{display:flex;justify-content:space-between;align-items:center}
+.mu{color:var(--g4)}.s12{font-size:12px}.s11{font-size:11px}.s10{font-size:10px}
+.loading{text-align:center;padding:48px 20px;color:var(--g4)}
+.spin{width:30px;height:30px;border:3px solid var(--g7);border-top-color:var(--red);border-radius:50%;animation:sp .8s linear infinite;margin:0 auto 12px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.empty{text-align:center;padding:48px 20px}
+.empty h3{font-size:16px;font-weight:700;color:var(--g3);margin-bottom:6px}
+.empty p{font-size:13px;color:var(--g5);line-height:1.5}
+.scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
+hr{border:none;border-top:1px solid var(--g7);margin:14px 0}
+#toast{position:fixed;bottom:calc(68px + var(--safe-b) + 10px);left:50%;transform:translateX(-50%) translateY(16px);background:var(--g6);color:var(--white);padding:9px 18px;border-radius:20px;font-size:13px;font-weight:600;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;z-index:400;white-space:nowrap}
+#toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.divlabel{font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--g4);margin:14px 0 8px;padding-left:2px}
+/* Pitch availability badges */
+.av-green{background:rgba(76,217,100,.15);color:#4cd964;border:1px solid rgba(76,217,100,.35);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:800;text-align:center}
+.av-yellow{background:rgba(255,214,10,.15);color:#ffd60a;border:1px solid rgba(255,214,10,.35);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:800;text-align:center}
+.av-red{background:rgba(200,16,46,.2);color:#e8273e;border:1px solid rgba(200,16,46,.4);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:800;text-align:center}
+.pitch-card{background:var(--g8);border-radius:12px;border:1px solid var(--g7);margin-bottom:10px;overflow:hidden}
+.pitch-card-body{display:flex;align-items:center;padding:12px 14px;gap:12px}
+.pitch-hist{border-top:1px solid var(--g7);padding:8px 14px;display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.pitch-chip{flex-shrink:0;text-align:center;background:var(--g7);border-radius:8px;padding:5px 10px;min-width:44px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hdr">
+    <button id="back-btn" onclick="goBack()">‹ Back</button>
+    <div style="flex:1;min-width:0">
+      <div id="hdr-title">Dawg<span>Data</span></div>
+      <div id="hdr-sub"></div>
+    </div>
+    <button class="rfbtn" onclick="refreshStats()">↻</button>
+  </div>
+
+  <div id="content">
+
+    <!-- TEAMS -->
+    <div id="v-teams" class="view on">
+      <div class="card">
+        <div class="card-hdr">PGCBL West Standings
+          <span style="display:flex;gap:10px" class="s10 mu"><span style="width:22px;text-align:center">W</span><span style="width:22px;text-align:center">L</span><span style="width:38px;text-align:center">PCT</span><span style="width:28px;text-align:center">GB</span></span>
+        </div>
+        <div id="standings-body"><div class="loading"><div class="spin"></div></div></div>
+      </div>
+      <div class="roster-label mt8">Teams — tap to view roster + scout</div>
+      <div id="team-list"></div>
+    </div>
+
+    <!-- ROSTER -->
+    <div id="v-roster" class="view">
+      <div id="roster-pitchers" class="roster-sect"></div>
+      <div id="roster-hitters"  class="roster-sect"></div>
+    </div>
+
+    <!-- MATRIX -->
+    <div id="v-matrix" class="view">
+      <!-- Legend always visible -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;font-size:11px">
+        <span style="background:var(--p-dg);color:#86efac;padding:3px 9px;border-radius:6px;font-weight:700">&lt;20%</span>
+        <span style="background:var(--p-g);color:#bbf7d0;padding:3px 9px;border-radius:6px;font-weight:700">20–35%</span>
+        <span style="background:var(--p-a);color:#fde68a;padding:3px 9px;border-radius:6px;font-weight:700">35–50%</span>
+        <span style="background:var(--p-o);color:#fed7aa;padding:3px 9px;border-radius:6px;font-weight:700">50–65%</span>
+        <span style="background:var(--p-r);color:#fecaca;padding:3px 9px;border-radius:6px;font-weight:700">&gt;65%</span>
+        <span style="margin-left:auto;color:var(--g4);font-size:10px;align-self:center">P(≥1 run scored)</span>
+      </div>
+      <!-- All pitcher cards rendered here automatically -->
+      <div id="mx-all"></div>
+    </div>
+
+    <!-- PITCH AVAILABILITY -->
+    <div id="v-pitches" class="view">
+      <div class="flex-bc mb8">
+        <span class="mu s12">Batavia Muckdogs — Pitch Availability</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm btn-s" onclick="document.getElementById('chart-ph-in').click()">📊 Chart</button>
+          <button class="btn btn-sm btn-p" onclick="openNewPitchLog()">+ Log</button>
+        </div>
+      </div>
+      <input type="file" id="chart-ph-in" accept="image/*" capture="environment" style="display:none" onchange="handleChartUpload(this)">
+      <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+        <span class="av-green" style="border-radius:6px;font-size:10px">● Available</span>
+        <span class="av-yellow" style="border-radius:6px;font-size:10px">● Maybe (1 day)</span>
+        <span class="av-red" style="border-radius:6px;font-size:10px">● Unavailable</span>
+      </div>
+      <div id="v-pitches-body"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+
+    <!-- REPORTS -->
+    <div id="v-reports" class="view">
+      <!-- Game Sheets -->
+      <div class="flex-bc mb8">
+        <span style="font-size:13px;font-weight:700">Game Sheets</span>
+        <button class="btn btn-sm btn-p" onclick="openNewSheet()">+ New Sheet</button>
+      </div>
+      <div style="margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+        <span class="mu s12" id="sheets-count">0 sheets</span>
+        <select class="fsel" id="sheet-filter" style="width:auto;font-size:12px;padding:6px 28px 6px 10px" onchange="renderGameSheets()">
+          <option value="">All opponents</option>
+          <option>Auburn Doubledays</option><option>Elmira Pioneers</option>
+          <option>Geneva Red Wings</option><option>Jamestown Tarp Skunks</option>
+          <option>Newark Pilots</option><option>Niagara Falls Americans</option>
+          <option>Niagara Ironbacks</option><option>Olean Oilers</option>
+        </select>
+      </div>
+      <div id="sheets-list" style="margin-bottom:16px"></div>
+      <hr>
+      <!-- Player Notes -->
+      <div class="divlabel">Player Notes</div>
+      <div class="flex-bc mb8">
+        <span class="mu s12" id="rep-count">— notes</span>
+        <select class="fsel" id="rep-filter" style="width:auto;font-size:12px;padding:6px 28px 6px 10px" onchange="renderReports()">
+          <option value="">All teams</option>
+          <option>Auburn Doubledays</option><option>Batavia Muckdogs</option>
+          <option>Elmira Pioneers</option><option>Geneva Red Wings</option>
+          <option>Jamestown Tarp Skunks</option><option>Newark Pilots</option>
+          <option>Niagara Falls Americans</option><option>Olean Oilers</option>
+        </select>
+      </div>
+      <div id="rep-list"></div>
+    </div>
+
+    <!-- LEADERS -->
+    <div id="v-leaders" class="view">
+      <div id="leaders-body"><div class="loading"><div class="spin"></div><p style="margin-top:8px">Loading league stats…</p></div></div>
+    </div>
+
+  </div>
+
+  <nav id="tabs">
+    <button class="tb on" id="tab-teams" onclick="switchTab('teams',this)">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-6 9 6v11a1 1 0 01-1 1H4a1 1 0 01-1-1z" stroke-width="1.5"/><path d="M9 21V12h6v9" stroke-width="1.5"/></svg>
+      Teams
+    </button>
+    <button class="tb" id="tab-leaders" onclick="switchTab('leaders',this)">
+      <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" stroke-width="1.5"/></svg>
+      Leaders
+    </button>
+    <button class="tb" id="tab-matrix" onclick="switchTab('matrix',this)">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1" stroke-width="1.5"/><rect x="13" y="3" width="8" height="8" rx="1" stroke-width="1.5"/><rect x="3" y="13" width="8" height="8" rx="1" stroke-width="1.5"/><rect x="13" y="13" width="8" height="8" rx="1" stroke-width="1.5"/></svg>
+      Matrix
+    </button>
+    <button class="tb" id="tab-pitches" onclick="switchTab('pitches',this)">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="1.5"/><path d="M12 3c0 5 3 8 3 9s-3 4-3 9M12 3c0 5-3 8-3 9s3 4 3 9" stroke-width="1.5"/></svg>
+      Avail
+    </button>
+    <button class="tb" id="tab-reports" onclick="switchTab('reports',this)">
+      <svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2" stroke-width="1.5"/><path d="M8 8h8M8 12h8M8 16h5" stroke-width="1.5" stroke-linecap="round"/></svg>
+      Reports
+    </button>
+  </nav>
+</div>
+
+<!-- ═══ SCOUT MODAL ═══ -->
+<div class="overlay" id="ov-scout">
+  <div class="modal" id="scout-modal-inner">
+    <!-- Header -->
+    <div class="mhdr">
+      <div style="min-width:0">
+        <div class="mtitle" id="sc-name">Player</div>
+        <div class="msub" id="sc-team"></div>
+      </div>
+      <button class="mclose" onclick="closeOv('ov-scout')">✕</button>
+    </div>
+
+    <!-- Live stats -->
+    <div id="sc-stats" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
+
+    <hr>
+
+    <!-- ── NOTES SECTION ── -->
+    <div class="divlabel">📝 Scouting Notes</div>
+    <div id="sc-notes-list"></div>
+
+    <!-- Add new note -->
+    <div style="background:var(--g7);border-radius:12px;padding:12px;margin-bottom:14px">
+      <textarea class="fta" id="sc-new-note" rows="4" placeholder="Type your note here… velocity, pitch mix, tendencies, weaknesses, hot/cold zones, plate approach…" style="background:var(--g8);border-color:var(--g6);margin-bottom:8px"></textarea>
+      <button class="btn btn-p btn-bl" onclick="addNote()" id="add-note-btn">Add Note</button>
+    </div>
+
+    <hr>
+
+    <!-- ── PHOTOS SECTION ── -->
+    <div class="divlabel">📸 Photos &amp; Charts</div>
+    <div id="sc-photos" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>
+    <div class="phzone" onclick="document.getElementById('ph-in').click()">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="2" stroke="white" stroke-width="1.5"/><circle cx="12" cy="12" r="4" stroke="white" stroke-width="1.5"/><path d="M9 5l1.5-2h3L15 5" stroke="white" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      <p><strong>Tap to photograph</strong></p>
+      <p>Pitch chart · scouting sheet · spray chart</p>
+    </div>
+    <input type="file" id="ph-in" accept="image/*" capture="environment" multiple style="display:none" onchange="handlePhotos(this)">
+    <div class="ph-grid" id="ph-prev"></div>
+
+    <hr>
+
+    <!-- ── SETTINGS ── -->
+    <div class="divlabel">⚙️ Report Settings</div>
+    <div class="frow" style="margin-bottom:14px">
+      <div class="fg" style="margin:0">
+        <label class="fl">Grade (20–80)</label>
+        <input class="fi" id="sc-grade" type="number" min="20" max="80" step="5" placeholder="50">
+      </div>
+      <div class="fg" style="margin:0">
+        <label class="fl">Threat Level</label>
+        <select class="fsel" id="sc-threat">
+          <option value="">—</option>
+          <option value="high">High</option>
+          <option value="med">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn btn-s btn-bl" onclick="saveSettings()">Save Grade &amp; Threat</button>
+  </div>
+</div>
+
+<!-- ═══ REPORT VIEW MODAL ═══ -->
+<div class="overlay" id="ov-report">
+  <div class="modal">
+    <div class="mhdr">
+      <div class="mtitle" id="rv-name">Report</div>
+      <button class="mclose" onclick="closeOv('ov-report')">✕</button>
+    </div>
+    <div id="rv-body"></div>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="btn btn-s" style="flex:1" onclick="deleteReport()">Delete All</button>
+      <button class="btn btn-p" style="flex:1" onclick="closeOv('ov-report')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PITCH LOG MODAL ═══ -->
+<div class="overlay" id="ov-pitchlog">
+  <div class="modal">
+    <div class="mhdr">
+      <div class="mtitle" id="pl-name-display">Log Outing</div>
+      <button class="mclose" onclick="closeOv('ov-pitchlog')">✕</button>
+    </div>
+    <div class="fg">
+      <label class="fl">Pitcher Name</label>
+      <input class="fi" id="pl-pitcher-name" type="text" placeholder="Last, First" list="pl-name-list" autocomplete="off">
+      <datalist id="pl-name-list"></datalist>
+    </div>
+    <div class="frow">
+      <div class="fg" style="margin:0">
+        <label class="fl">Pitch Count</label>
+        <input class="fi" id="pl-pitches" type="number" min="0" max="200" placeholder="e.g. 72">
+      </div>
+      <div class="fg" style="margin:0">
+        <label class="fl">Date of Outing</label>
+        <input class="fi" id="pl-date" type="date">
+      </div>
+    </div>
+    <div class="fg mt8">
+      <label class="fl">Notes (optional)</label>
+      <textarea class="fta" id="pl-notes" rows="2" placeholder="Stuff working, any concerns…"></textarea>
+    </div>
+    <button class="btn btn-p btn-bl mt8" onclick="savePitchLog()">Save Outing</button>
+  </div>
+</div>
+
+<!-- ═══ GAME SHEET MODAL ═══ -->
+<div class="overlay" id="ov-gamesheet">
+  <div class="modal">
+    <div class="mhdr">
+      <div class="mtitle">New Game Sheet</div>
+      <button class="mclose" onclick="closeOv('ov-gamesheet')">✕</button>
+    </div>
+    <div class="frow" style="margin-bottom:12px">
+      <div class="fg" style="margin:0">
+        <label class="fl">Opponent</label>
+        <select class="fsel" id="gs-opponent">
+          <option value="">Select opponent…</option>
+          <option>Auburn Doubledays</option><option>Elmira Pioneers</option>
+          <option>Geneva Red Wings</option><option>Jamestown Tarp Skunks</option>
+          <option>Newark Pilots</option><option>Niagara Falls Americans</option>
+          <option>Niagara Ironbacks</option><option>Olean Oilers</option>
+        </select>
+      </div>
+      <div class="fg" style="margin:0">
+        <label class="fl">Game Date</label>
+        <input class="fi" id="gs-date" type="date">
+      </div>
+    </div>
+
+    <div class="divlabel">📸 Scouting Sheet Photo</div>
+    <div class="phzone" onclick="document.getElementById('gs-ph-in').click()">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="2" stroke="white" stroke-width="1.5"/><circle cx="12" cy="12" r="4" stroke="white" stroke-width="1.5"/><path d="M9 5l1.5-2h3L15 5" stroke="white" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      <p><strong>Photograph scouting sheet</strong></p>
+      <p>AI will auto-detect batter rows — or add manually below</p>
+    </div>
+    <input type="file" id="gs-ph-in" accept="image/*" capture="environment" multiple style="display:none" onchange="handleSheetPhoto(this)">
+    <div class="ph-grid" id="gs-photos-prev" style="margin-top:8px"></div>
+
+    <div class="flex-bc" style="margin:14px 0 8px">
+      <div class="divlabel" style="margin:0">Batter Rows</div>
+      <button class="btn btn-xs btn-s" onclick="addBatterRow()">+ Add Batter</button>
+    </div>
+    <div id="gs-batters-list"></div>
+    <button class="btn btn-p btn-bl mt8" onclick="saveGameSheet()">Save Game Sheet</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════
+//  CONFIG
+// ══════════════════════════════════════════════════
+const RAIL = '';
+
+// 2025 PGCBL West Division league averages
+const LA_WHIP = 1.37;
+const LA_K9   = 8.21;
+
+// Runner values (cumulative)
+const RUNNER_VAL = {
+  '___': 0,    '1__': 0.25, '_2_': 0.50, '__3': 0.75,
+  '12_': 0.75, '1_3': 1.00, '_23': 1.25, '123': 1.50
+};
+const OUTS_MULT = [1, 2/3, 1/3];
+const BASE_ROWS = [
+  { key:'___', label:'Bases Empty'   },
+  { key:'1__', label:'Runner on 1st' },
+  { key:'_2_', label:'Runner on 2nd' },
+  { key:'__3', label:'Runner on 3rd' },
+  { key:'12_', label:'1st & 2nd'     },
+  { key:'1_3', label:'1st & 3rd'     },
+  { key:'_23', label:'2nd & 3rd'     },
+  { key:'123', label:'Bases Loaded'  },
+];
+
+const TEAMS = [
+  { name:'Batavia Muckdogs',        slug:'bataviamuckdogs' },
+  { name:'Jamestown Tarp Skunks',   slug:'jamestowntarpskunks' },
+  { name:'Auburn Doubledays',       slug:'auburndoubledays' },
+  { name:'Geneva Red Wings',        slug:'genevaredwings' },
+  { name:'Newark Pilots',           slug:'newarkpilots' },
+  { name:'Niagara Falls Americans', slug:'niagarafallsamericans' },
+  { name:'Niagara Ironbacks',       slug:'niagaraironbacks' },
+  { name:'Elmira Pioneers',         slug:'elmirapioneers' },
+  { name:'Olean Oilers',            slug:'oleanoilers' },
+];
+
+// ══════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════
+let allStats     = null;
+let currentTeam  = null;
+let currentKey   = null;   // active scout key: "team||player"
+let pendingPhotos= [];
+let currentRepKey= null;
+let navStack     = [];
+let editingNoteId= null;
+
+const LS = {
+  get: k => { try { return JSON.parse(localStorage.getItem(k)) } catch { return null } },
+  set: (k,v) => localStorage.setItem(k, JSON.stringify(v))
+};
+
+// ══════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════
+async function init() {
+  setHdr('Dawg<span>Data</span>', 'Loading…');
+  const cached = LS.get('stats_cache');
+  if (cached) { allStats = cached; applyStats(); setHdr('Dawg<span>Data</span>', 'Cached · '+timeAgo(cached.updatedAt)); }
+  await fetchStats();
+  // Pull cloud data for Dewey shared access
+  fetchCloudScouts();
+  fetchPitchData();
+  fetchSheets();
+}
+
+async function fetchStats() {
+  try {
+    const r = await fetch(`${RAIL}/api/stats`, { signal: AbortSignal.timeout(22000) });
+    if (r.ok) {
+      const data = await r.json();
+      // Only accept data that has real content — never overwrite good cache with empty response
+      const hasData = (data.hitters?.length > 0) || (data.pitchers?.length > 0) || (data.standings?.length > 0);
+      if (!hasData) return;
+      storeSnapshot(data);
+      allStats = data;
+      LS.set('stats_cache', data);
+      applyStats();
+      setHdr('Dawg<span>Data</span>', 'Updated '+timeAgo(data.updatedAt));
+    }
+  } catch {
+    if (!allStats) setHdr('Dawg<span>Data</span>', 'Offline — no cached data');
+    else setHdr('Dawg<span>Data</span>', 'Offline · '+timeAgo(allStats.updatedAt));
+  }
+}
+
+async function refreshStats() {
+  setHdr('Dawg<span>Data</span>', 'Refreshing…');
+  try { await fetch(`${RAIL}/api/refresh`, { method:'POST', signal: AbortSignal.timeout(6000) }); } catch {}
+  await fetchStats();
+  toast('Refreshed ✓');
+}
+
+// Pull cloud scouting reports and merge with local (Dewey shared DB)
+async function fetchCloudScouts() {
+  try {
+    const r = await fetch(`${RAIL}/api/scouting`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return;
+    const cloud = await r.json();  // { player_key: { uploads, analysis, hot } }
+    const local = LS.get('scouts') || {};
+    let changed = false;
+    Object.entries(cloud).forEach(([key, val]) => {
+      const cloudNotes = parseCloudNotes(val.analysis);
+      if (!local[key]) {
+        local[key] = { playerName: key.split('||')[1], team: key.split('||')[0], notes: cloudNotes, photos: val.uploads||[], grade:'', threat:'' };
+        changed = true;
+      } else {
+        // Merge notes: add any cloud notes not in local
+        const localNoteIds = new Set((local[key].notes||[]).map(n=>n.id));
+        const newNotes = cloudNotes.filter(n => !localNoteIds.has(n.id));
+        if (newNotes.length) { local[key].notes = [...(local[key].notes||[]), ...newNotes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)); changed=true; }
+        // Merge photos
+        if (val.uploads?.length) {
+          const existing = new Set(local[key].photos||[]);
+          val.uploads.forEach(u => { if(!existing.has(u)){(local[key].photos=local[key].photos||[]).push(u);changed=true;} });
+        }
+      }
+    });
+    if (changed) LS.set('scouts', local);
+  } catch {}
+}
+
+function parseCloudNotes(analysis) {
+  if (!analysis) return [];
+  try {
+    const parsed = JSON.parse(analysis);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {}
+  // Plain text — wrap as single legacy note
+  if (analysis.trim()) return [{ id: 'legacy_'+Date.now(), text: analysis, createdAt: new Date(0).toISOString(), updatedAt: null }];
+  return [];
+}
+
+function applyStats() {
+  const h = (allStats?.hitters  || []).filter(isRealPlayer);
+  const p = (allStats?.pitchers || []).filter(isRealPlayer);
+  allStats._hitters  = h;
+  allStats._pitchers = p;
+  const s5  = getSnapshot(5);
+  const s7  = getSnapshot(7);
+  const s14 = getSnapshot(14);
+  h.forEach(x => x._hot = isHot(x, s5,  'h'));
+  p.forEach(x => x._hot = isHot(x, s14, 'p', s7));
+  // Matrix uses fixed 2025 PGCBL West baseline — do not override from live data (too noisy early season)
+  // Auto-seed pitch availability from box score data
+  if (allStats.pitchCounts) applyPitchCountsFromStats(allStats.pitchCounts);
+  syncHotStatus();
+  renderStandings();
+  renderTeamList();
+  renderMatrixView();
+  renderLeaders();
+  renderPitchAvailability();
+}
+
+// Filter out schedule entries that the scraper incorrectly returns as players
+// Real names don't match team names and don't start with "at "
+const TEAM_NAMES_SET = new Set([
+  'Batavia Muckdogs','Niagara Falls Americans','Olean Oilers',
+  'Jamestown Tarp Skunks','Auburn Doubledays','Geneva Red Wings',
+  'Elmira Pioneers','Newark Pilots','Niagara Ironbacks'
+]);
+function isRealPlayer(p) {
+  if (!p || !p.name) return false;
+  const n = p.name.trim();
+  if (!n || n.length < 3) return false;
+  // Schedule entries start with "at " or exactly match a team name
+  if (/^at\s+/i.test(n)) return false;
+  if (TEAM_NAMES_SET.has(n)) return false;
+  // Must have at least one real stat value
+  const hasStats = (p.ip > 0) || (p.ab > 0) || (p.gp > 0) || (p.era != null && p.era > 0);
+  return hasStats;
+}
+
+// ══════════════════════════════════════════════════
+//  SNAPSHOTS / HOT STREAK
+// ══════════════════════════════════════════════════
+function storeSnapshot(data) {
+  const snaps = LS.get('snaps') || [];
+  snaps.push({ ts: Date.now(),
+    h: (data.hitters ||[]).map(x=>({n:x.name,t:x.team,avg:x.avg,h:x.h,gp:x.gp})),
+    p: (data.pitchers||[]).map(x=>({n:x.name,t:x.team,era:x.era,ip:x.ip}))
+  });
+  LS.set('snaps', snaps.filter(s=>s.ts > Date.now()-30*864e5).slice(-120));
+}
+function getSnapshot(days) {
+  const snaps = LS.get('snaps') || [];
+  const t = Date.now() - days*864e5;
+  const c = snaps.filter(s=>s.ts<=t+864e5&&s.ts>=t-864e5);
+  return c.length ? c[c.length-1] : null;
+}
+function isHot(player, snap, type, snap2) {
+  if (!snap) return false;
+  if (type==='h') {
+    // 🔥 if AVG rising over last 5 games OR averaging 2+ hits/game over that span
+    const old = snap.h?.find(x=>x.n===player.name&&x.t===player.team);
+    if (!old) return false;
+    const dG = (player.gp||0)-(old.gp||0);
+    const dH = (player.h||0)-(old.h||0);
+    const avgRising = ((player.avg||0)-(old.avg||0)) > 0.010;
+    const multiHitPace = dG >= 3 && dH/dG >= 2;
+    return avgRising || multiHitPace;
+  } else {
+    // ⚾ if ERA trending DOWN across three data points: snap14 > snap7 > current
+    const old14 = snap.p?.find(x=>x.n===player.name&&x.t===player.team);
+    if (!old14?.era) return false;
+    const cur = player.era ?? 99;
+    if (snap2) {
+      const old7 = snap2.p?.find(x=>x.n===player.name&&x.t===player.team);
+      if (old7?.era) return old14.era > old7.era && old7.era > cur;
+    }
+    return cur < old14.era - 0.20;
+  }
+}
+
+// ══════════════════════════════════════════════════
+//  MATRIX FORMULA
+// ══════════════════════════════════════════════════
+// λ = ERA × (WHIP/LA_WHIP) × (LA_K9/K9) × (1/9)
+// λadj = λ × (1+runner_val) × outs_mult
+// P(≥1) = 1 − e^(−λadj)
+
+function calcLambda(p) {
+  const laW = window._LA_WHIP || LA_WHIP;   // 1.37
+  const laK = window._LA_K9   || LA_K9;     // 8.21
+  const ip  = p.ip || 0;
+
+  // Bayesian regression: blend actual stats with league average weighted by IP.
+  // At REG_IP innings pitched, the blend is 50/50. More IP = more trust in real stats.
+  // This correctly handles ERA=0 / WHIP=0 (real perfect performances) and
+  // K9=0 (actually bad — no strikeouts), rather than falling back to league average.
+  const REG_IP   = 7;
+  const totalIP  = ip + REG_IP;
+  const era  = (ip * (p.era  ?? 4.50) + REG_IP * 4.50) / totalIP;
+  const whip = (ip * (p.whip ?? laW)  + REG_IP * laW)  / totalIP;
+  const k9   = (ip * (p.k9   ?? laK)  + REG_IP * laK)  / totalIP;
+
+  return era * (whip / laW) * (laK / k9) * (1/9);
+}
+function calcProb(lb, baseKey, outs) {
+  const la = lb * (1 + (RUNNER_VAL[baseKey]??0)) * OUTS_MULT[outs];
+  return 1 - Math.exp(-la);
+}
+function probColor(p) {
+  if (p < 0.20) return 'c-dg';
+  if (p < 0.35) return 'c-g';
+  if (p < 0.50) return 'c-a';
+  if (p < 0.65) return 'c-o';
+  return 'c-r';
+}
+
+// Renders a card per Batavia pitcher — no interaction needed, auto-updates on stat refresh
+function renderMatrixView() {
+  const el = document.getElementById('mx-all');
+  if (!el) return;
+
+  const pitchers = (allStats?._pitchers || allStats?.pitchers || [])
+    .filter(p => p.team === 'Batavia Muckdogs')
+    .sort((a,b) => (a.era ?? 99) - (b.era ?? 99));
+
+  if (!pitchers.length) {
+    el.innerHTML = `<div class="empty">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="white" stroke-width="1.5"/><path d="M12 3c0 5 3 8 3 9s-3 4-3 9M12 3c0 5-3 8-3 9s3 4 3 9" stroke="white" stroke-width="1.5"/></svg>
+      <h3>No Batavia pitchers yet</h3>
+      <p>Pitcher matrices will appear automatically once the 2026 season begins and stats are on PGCBL.com. Hit ↻ to refresh.</p>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = pitchers.map(p => {
+    const lb  = calcLambda(p);
+    const era = p.era  != null ? p.era.toFixed(2)  : '—';
+    const wh  = p.whip != null ? p.whip.toFixed(2) : '—';
+    const k9  = p.k9   != null ? p.k9.toFixed(1)   : '—';
+    const hot = p._hot ? ' ⚾' : '';
+
+    let rows = '';
+    BASE_ROWS.forEach(row => {
+      rows += `<tr><td>${row.label}</td>`;
+      [0,1,2].forEach(o => {
+        const prob = calcProb(lb, row.key, o);
+        rows += `<td class="${probColor(prob)}">${(prob*100).toFixed(1)}%</td>`;
+      });
+      rows += '</tr>';
+    });
+
+    return `<div class="card" style="margin-bottom:14px">
+      <div class="card-hdr" style="background:var(--g7)">
+        <span style="font-size:13px;font-weight:800;letter-spacing:0;text-transform:none;color:var(--white)">${p.name}${hot}</span>
+        <span style="display:flex;gap:10px;font-size:10px;color:var(--g4)">
+          <span>ERA <strong style="color:var(--white)">${era}</strong></span>
+          <span>WHIP <strong style="color:var(--white)">${wh}</strong></span>
+          <span>K/9 <strong style="color:var(--white)">${k9}</strong></span>
+          <span>IP <strong style="color:var(--white)">${p.ip??'—'}</strong></span>
+        </span>
+      </div>
+      <div class="card-body" style="padding:10px">
+        <div class="scroll-x">
+          <table class="pmx">
+            <thead><tr><th>Situation</th><th>0 Out</th><th>1 Out</th><th>2 Outs</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════
+//  STANDINGS + TEAMS
+// ══════════════════════════════════════════════════
+function renderStandings() {
+  const standings = allStats?.standings || [];
+  const list = standings.length
+    ? standings
+    : TEAMS.map(t => ({ name: t.name, w: null, l: null, pct: null, gb: '—', streak: '' }));
+
+  const fmtPct = v => v == null ? '—' : (v === 1 ? '1.000' : v.toFixed(3).replace(/^0/, ''));
+
+  document.getElementById('standings-body').innerHTML =
+    list.map((t, i) => {
+      const dogs = t.name === 'Batavia Muckdogs';
+      const streakColor = t.streak?.startsWith('Won') ? 'color:var(--green)' : t.streak?.startsWith('Lost') ? 'color:var(--red-l)' : '';
+      return `<div class="srow" onclick="openTeam('${esc(t.name)}')" style="cursor:pointer">
+        <div class="srow-rank">${i + 1}</div>
+        <div class="srow-name${dogs ? ' dogs' : ''}" style="line-height:1.25">
+          ${t.name}
+          ${t.streak ? `<div style="font-size:9px;${streakColor};margin-top:1px">${t.streak}</div>` : ''}
+        </div>
+        <div class="srow-stat" style="width:22px">${t.w ?? '—'}</div>
+        <div class="srow-stat" style="width:22px">${t.l ?? '—'}</div>
+        <div class="srow-stat" style="width:38px">${fmtPct(t.pct)}</div>
+        <div class="srow-stat" style="width:28px">${t.gb ?? '—'}</div>
+      </div>`;
+    }).join('') +
+    (standings.length ? '' : '<div style="padding:6px 14px;font-size:10px;color:var(--g5)">Standings update automatically as games are played</div>');
+}
+
+function renderTeamList() {
+  const standings = allStats?.standings || [];
+  // Build map of name → record for quick lookup
+  const recMap = {};
+  standings.forEach(s => { recMap[s.name] = s; });
+
+  // Use standings order when available, else fall back to TEAMS order
+  const teamList = standings.length
+    ? standings.map(s => TEAMS.find(t => t.name === s.name) || { name: s.name, slug: '' })
+    : TEAMS;
+
+  document.getElementById('team-list').innerHTML = teamList.map(t => {
+    const th = (allStats?._hitters  || allStats?.hitters  || []).filter(h => h.team === t.name);
+    const tp = (allStats?._pitchers || allStats?.pitchers || []).filter(p => p.team === t.name);
+    const hc = th.filter(h => h._hot).length + tp.filter(p => p._hot).length;
+    const scouts = LS.get('scouts') || {};
+    const sc = Object.keys(scouts).filter(k => k.startsWith(t.name + '||')).length;
+    const rec = recMap[t.name];
+    const recStr = rec && rec.w != null ? `${rec.w}–${rec.l}` : '';
+    const sub = (th.length || tp.length)
+      ? `${recStr ? recStr + ' · ' : ''}${tp.length} P · ${th.length} H${hc ? ` · 🔥×${hc}` : ''}${sc ? ` · ${sc} scouted` : ''}`
+      : `${recStr ? recStr + ' · ' : ''}${sc ? sc + ' scouted · ' : ''}Tap to scout`;
+    return `<button class="team-btn" onclick="openTeam('${esc(t.name)}')">
+      <div><div class="tn${t.name === 'Batavia Muckdogs' ? ' dogs' : ''}">${t.name}</div><div class="ta">${sub}</div></div>
+      <div style="color:var(--g5);font-size:18px">›</div>
+    </button>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════
+//  TEAM ROSTER
+// ══════════════════════════════════════════════════
+function openTeam(teamName) {
+  currentTeam = teamName;
+  navStack.push({ view:'v-teams', title:'Dawg<span>Data</span>', sub:'', back:false });
+  showView('v-roster');
+  setHdr(teamName, 'Tap any player to scout', true);
+  renderRoster('roster-pitchers','Pitchers',(allStats?._pitchers||allStats?.pitchers||[]).filter(p=>p.team===teamName),false);
+  renderRoster('roster-hitters', 'Hitters', (allStats?._hitters ||allStats?.hitters ||[]).filter(h=>h.team===teamName),true);
+}
+
+function renderRoster(elId, label, players, isHitter) {
+  const el = document.getElementById(elId);
+  const scouts = LS.get('scouts')||{};
+  if (!players.length) {
+    el.innerHTML = `<div class="roster-label">${label}</div>
+      <div style="padding:18px;text-align:center;color:var(--g5);font-size:13px;background:var(--g8);border-radius:12px;border:1px solid var(--g7)">
+        Stats load once the season begins.<br>
+        <button class="btn btn-sm btn-s" style="margin-top:10px" onclick="openScout('Unknown Player','${esc(currentTeam)}',${isHitter})">+ Scout a player manually</button>
+      </div>`;
+    return;
+  }
+  const sorted = [...players].sort((a,b)=>isHitter?(b.avg||0)-(a.avg||0):(a.era??99)-(b.era??99));
+  el.innerHTML = `<div class="roster-label">${label} (${players.length})</div>
+    <div style="border-radius:12px;overflow:hidden;border:1px solid var(--g7)">
+    ${sorted.map(p=>{
+      const hot = p._hot?(isHitter?' 🔥':' ⚾'):'';
+      const key = `${p.team}||${p.name}`;
+      const sc = scouts[key];
+      const noteCount = sc?.notes?.length||0;
+      const photoCount = sc?.photos?.length||0;
+      const dot = sc ? ` <span style="color:var(--red);font-size:11px">●</span>` : '';
+      const hint = sc ? `<span style="font-size:10px;color:var(--g5);margin-left:4px">${noteCount?noteCount+'n ':''}${photoCount?photoCount+'p':''}</span>` : '';
+      if (isHitter) {
+        return `<div class="player-row" onclick="openScout('${esc(p.name)}','${esc(p.team)}',true)">
+          <div class="pname">${p.name}${hot}${dot}${hint}</div>
+          <div class="pstats">
+            <div class="ps"><div class="v">${fmtAvg(p.avg)}</div><div class="l">AVG</div></div>
+            <div class="ps"><div class="v">${p.hr??'—'}</div><div class="l">HR</div></div>
+            <div class="ps"><div class="v">${p.rbi??'—'}</div><div class="l">RBI</div></div>
+            <div class="ps"><div class="v">${p.ops?p.ops.toFixed(3):'—'}</div><div class="l">OPS</div></div>
+          </div>
+        </div>`;
+      } else {
+        const vc = p.era!=null?(p.era<2.5?'color:var(--green)':p.era>5.0?'color:var(--red-l)':''):'';
+        return `<div class="player-row" onclick="openScout('${esc(p.name)}','${esc(p.team)}',false)">
+          <div class="pname">${p.name}${hot}${dot}${hint}</div>
+          <div class="pstats">
+            <div class="ps"><div class="v" style="${vc}">${p.era?.toFixed(2)??'—'}</div><div class="l">ERA</div></div>
+            <div class="ps"><div class="v">${p.whip?.toFixed(2)??'—'}</div><div class="l">WHIP</div></div>
+            <div class="ps"><div class="v">${p.ip??'—'}</div><div class="l">IP</div></div>
+            <div class="ps"><div class="v">${p.k9?.toFixed(1)??'—'}</div><div class="l">K/9</div></div>
+          </div>
+        </div>`;
+      }
+    }).join('')}
+    </div>`;
+}
+
+// ══════════════════════════════════════════════════
+//  SCOUT MODAL
+// ══════════════════════════════════════════════════
+function openScout(playerName, teamName, isHitter) {
+  currentKey = `${teamName}||${playerName}`;
+  pendingPhotos = [];
+  editingNoteId = null;
+
+  document.getElementById('sc-name').textContent = playerName;
+  document.getElementById('sc-team').textContent  = teamName + (isHitter?' · Hitter':' · Pitcher');
+
+  // Stats bar
+  const player = isHitter
+    ? (allStats?.hitters ||[]).find(h=>h.name===playerName&&h.team===teamName)
+    : (allStats?.pitchers||[]).find(p=>p.name===playerName&&p.team===teamName);
+  const bar = document.getElementById('sc-stats');
+  if (player && isHitter) {
+    bar.innerHTML = [
+      chip('AVG',fmtAvg(player.avg)), chip('OBP',fmtAvg(player.obp)), chip('SLG',fmtAvg(player.slg)),
+      chip('HR',player.hr??'—'), chip('RBI',player.rbi??'—'), chip('SB',player.sb??'—'),
+      chip('K',player.k??'—'), chip('BB',player.bb??'—')
+    ].join('');
+  } else if (player) {
+    bar.innerHTML = [
+      chip('ERA',player.era?.toFixed(2)??'—'), chip('WHIP',player.whip?.toFixed(2)??'—'),
+      chip('IP',player.ip??'—'), chip('K/9',player.k9?.toFixed(1)??'—'),
+      chip('BB/9',player.bb9?.toFixed(1)??'—'), chip('W',player.w??'—'), chip('SV',player.sv??'—')
+    ].join('');
+  } else { bar.innerHTML=''; }
+
+  loadScoutModal();
+  document.getElementById('sc-new-note').value = '';
+  openOv('ov-scout');
+  // Scroll to top of modal
+  setTimeout(()=>{ const m=document.getElementById('scout-modal-inner'); if(m) m.parentElement.scrollTop=0; },50);
+}
+
+function loadScoutModal() {
+  const scouts = LS.get('scouts') || {};
+  const sc = scouts[currentKey] || {};
+
+  // Settings
+  document.getElementById('sc-grade').value  = sc.grade  || '';
+  document.getElementById('sc-threat').value = sc.threat || '';
+
+  // Notes
+  renderNotesList(sc.notes || []);
+
+  // Photos (saved)
+  const phEl = document.getElementById('sc-photos');
+  const photos = sc.photos || [];
+  phEl.innerHTML = photos.length
+    ? photos.map((src,i)=>`
+        <div class="ph-thumb">
+          <img src="${src}" onclick="fullPhoto(this.src)">
+          <button class="ph-rm" onclick="deletePhoto(${i})">✕</button>
+        </div>`).join('')
+    : '<span class="mu s11">No photos yet</span>';
+
+  document.getElementById('ph-prev').innerHTML = '';
+}
+
+function renderNotesList(notes) {
+  const el = document.getElementById('sc-notes-list');
+  const sorted = [...notes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  if (!sorted.length) {
+    el.innerHTML = '<div class="mu s12" style="padding:4px 0 12px;text-align:center">No notes yet — add the first one below</div>';
+    return;
+  }
+  el.innerHTML = sorted.map(n => `
+    <div class="note-card" id="note-${n.id}">
+      <div class="note-ts">
+        <span>${fmtTs(n.createdAt)}${n.updatedAt?' <span class="edited">(edited '+fmtTs(n.updatedAt)+')</span>':''}</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-xs btn-s" onclick="startEditNote('${n.id}')">✎ Edit</button>
+          <button class="btn btn-xs" style="background:rgba(200,16,46,.25);color:var(--red-l);border-radius:6px;padding:4px 9px;font-size:11px;font-weight:600;cursor:pointer;border:none" onclick="deleteNote('${n.id}')">✕</button>
+        </div>
+      </div>
+      <div class="note-text" id="note-text-${n.id}">${escHtml(n.text)}</div>
+      <div id="note-edit-${n.id}" style="display:none">
+        <textarea class="note-edit-ta" id="note-ta-${n.id}" rows="4">${escHtml(n.text)}</textarea>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="btn btn-xs btn-s" onclick="cancelEditNote('${n.id}')">Cancel</button>
+          <button class="btn btn-xs btn-p" onclick="saveEditNote('${n.id}')">Save Edit</button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function addNote() {
+  const ta = document.getElementById('sc-new-note');
+  const text = ta.value.trim();
+  if (!text) { toast('Write a note first'); return; }
+
+  const scouts = LS.get('scouts') || {};
+  if (!scouts[currentKey]) scouts[currentKey] = { playerName: currentKey.split('||')[1], team: currentKey.split('||')[0], notes:[], photos:[], grade:'', threat:'' };
+
+  const note = { id: Date.now().toString(), text, createdAt: new Date().toISOString(), updatedAt: null };
+  scouts[currentKey].notes = [note, ...(scouts[currentKey].notes||[])];
+  scouts[currentKey].updatedAt = new Date().toISOString();
+  LS.set('scouts', scouts);
+
+  ta.value = '';
+  renderNotesList(scouts[currentKey].notes);
+  syncToRailway(currentKey, scouts[currentKey]);
+  toast('Note saved ✓');
+}
+
+function startEditNote(id) {
+  document.getElementById('note-text-'+id).style.display = 'none';
+  document.getElementById('note-edit-'+id).style.display = 'block';
+  const ta = document.getElementById('note-ta-'+id);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+function cancelEditNote(id) {
+  document.getElementById('note-text-'+id).style.display = 'block';
+  document.getElementById('note-edit-'+id).style.display = 'none';
+}
+
+function saveEditNote(id) {
+  const newText = document.getElementById('note-ta-'+id).value.trim();
+  if (!newText) { toast('Note cannot be empty'); return; }
+  const scouts = LS.get('scouts') || {};
+  const sc = scouts[currentKey];
+  if (!sc) return;
+  const note = sc.notes.find(n=>n.id===id);
+  if (!note) return;
+  note.text = newText;
+  note.updatedAt = new Date().toISOString();
+  sc.updatedAt = new Date().toISOString();
+  LS.set('scouts', scouts);
+  renderNotesList(sc.notes);
+  syncToRailway(currentKey, sc);
+  toast('Note updated ✓');
+}
+
+function deleteNote(id) {
+  if (!confirm('Delete this note?')) return;
+  const scouts = LS.get('scouts') || {};
+  const sc = scouts[currentKey];
+  if (!sc) return;
+  sc.notes = (sc.notes||[]).filter(n=>n.id!==id);
+  sc.updatedAt = new Date().toISOString();
+  LS.set('scouts', scouts);
+  renderNotesList(sc.notes);
+  syncToRailway(currentKey, sc);
+  toast('Note deleted');
+}
+
+function saveSettings() {
+  const scouts = LS.get('scouts') || {};
+  if (!scouts[currentKey]) scouts[currentKey] = { playerName: currentKey.split('||')[1], team: currentKey.split('||')[0], notes:[], photos:[], grade:'', threat:'' };
+  scouts[currentKey].grade  = document.getElementById('sc-grade').value;
+  scouts[currentKey].threat = document.getElementById('sc-threat').value;
+  scouts[currentKey].updatedAt = new Date().toISOString();
+  LS.set('scouts', scouts);
+  syncToRailway(currentKey, scouts[currentKey]);
+  toast('Saved ✓');
+}
+
+// ── Photos ──
+function handlePhotos(input) {
+  Array.from(input.files).forEach(f => {
+    const r = new FileReader();
+    r.onload = e => { pendingPhotos.push(e.target.result); renderPhPrev(); };
+    r.readAsDataURL(f);
+  });
+  input.value = '';
+  // Auto-save pending photos when added
+  setTimeout(savePendingPhotos, 100);
+}
+
+function renderPhPrev() {
+  document.getElementById('ph-prev').innerHTML = pendingPhotos.map((src,i)=>`
+    <div class="ph-thumb">
+      <img src="${src}">
+      <button class="ph-rm" onclick="pendingPhotos.splice(${i},1);renderPhPrev()">✕</button>
+    </div>`).join('');
+}
+
+function savePendingPhotos() {
+  if (!pendingPhotos.length) return;
+  const scouts = LS.get('scouts') || {};
+  if (!scouts[currentKey]) scouts[currentKey] = { playerName: currentKey.split('||')[1], team: currentKey.split('||')[0], notes:[], photos:[], grade:'', threat:'' };
+  scouts[currentKey].photos = [...(scouts[currentKey].photos||[]), ...pendingPhotos];
+  scouts[currentKey].updatedAt = new Date().toISOString();
+  pendingPhotos = [];
+  LS.set('scouts', scouts);
+  loadScoutModal();
+  syncToRailway(currentKey, scouts[currentKey]);
+  toast('Photo saved ✓');
+}
+
+function deletePhoto(i) {
+  if (!confirm('Remove this photo?')) return;
+  const scouts = LS.get('scouts') || {};
+  const sc = scouts[currentKey];
+  if (!sc) return;
+  sc.photos.splice(i, 1);
+  sc.updatedAt = new Date().toISOString();
+  LS.set('scouts', scouts);
+  loadScoutModal();
+  syncToRailway(currentKey, sc);
+  toast('Photo removed');
+}
+
+// ── Railway sync (Dewey shared DB) ──
+async function syncToRailway(key, sc) {
+  const allPlayers = [...(allStats?._hitters||[]), ...(allStats?._pitchers||[])];
+  const player = allPlayers.find(x=>`${x.team}||${x.name}`===key);
+  try {
+    await fetch(`${RAIL}/api/scouting/${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        playerName: sc.playerName,
+        team: sc.team,
+        uploads: sc.photos || [],
+        analysis: JSON.stringify(sc.notes||[]),
+        hot: player?._hot || false
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+  } catch { /* offline — local save already done */ }
+}
+
+// Push hot status for all hot players to Railway so Dewey sees the emoji flag
+async function syncHotStatus() {
+  const scouts = LS.get('scouts') || {};
+  const hotPlayers = [
+    ...(allStats?._hitters||[]).filter(x=>x._hot),
+    ...(allStats?._pitchers||[]).filter(x=>x._hot)
+  ];
+  for (const p of hotPlayers) {
+    const key = `${p.team}||${p.name}`;
+    try {
+      await fetch(`${RAIL}/api/scouting/${encodeURIComponent(key)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerName: p.name,
+          team: p.team,
+          uploads: scouts[key]?.photos || [],
+          analysis: JSON.stringify(scouts[key]?.notes || []),
+          hot: true
+        }),
+        signal: AbortSignal.timeout(8000)
+      });
+    } catch {}
+  }
+}
+
+// ══════════════════════════════════════════════════
+//  LEAGUE LEADERS
+// ══════════════════════════════════════════════════
+function renderLeaders() {
+  const el = document.getElementById('leaders-body');
+  if (!allStats) {
+    el.innerHTML = '<div class="loading"><div class="spin"></div><p style="margin-top:8px">Loading league stats…</p></div>';
+    return;
+  }
+
+  const hitters  = (allStats._hitters  || allStats.hitters  || [])
+    .filter(h => (h.ab||0) >= 1)
+    .sort((a,b) => (b.avg||0)-(a.avg||0))
+    .slice(0, 25);
+
+  const pitchers = (allStats._pitchers || allStats.pitchers || [])
+    .filter(p => (p.ip||0) >= 0.1)
+    .sort((a,b) => (a.era??99)-(b.era??99))
+    .slice(0, 25);
+
+  if (!hitters.length && !pitchers.length) {
+    el.innerHTML = `<div class="empty"><h3>No stats yet</h3><p>Stats load automatically — tap ↻ to refresh.</p></div>`;
+    return;
+  }
+
+  const hRows = hitters.map((h,i) => `
+    <div class="srow" style="cursor:pointer" onclick="openScout('${esc(h.name)}','${esc(h.team)}',true)">
+      <div class="srow-rank">${i+1}</div>
+      <div class="srow-name${h.team==='Batavia Muckdogs'?' dogs':''}">
+        ${h._hot?'🔥 ':''}${h.name}
+        <div style="font-size:10px;color:var(--g4);font-weight:400;margin-top:1px">${h.team}</div>
+      </div>
+      <div class="srow-stat" style="width:46px">${fmtAvg(h.avg)}</div>
+      <div class="srow-stat">${h.hr??'—'}</div>
+      <div class="srow-stat">${h.rbi??'—'}</div>
+      <div class="srow-stat" style="width:50px">${h.ops?h.ops.toFixed(3):'—'}</div>
+    </div>`).join('');
+
+  const pRows = pitchers.map((p,i) => `
+    <div class="srow" style="cursor:pointer" onclick="openScout('${esc(p.name)}','${esc(p.team)}',false)">
+      <div class="srow-rank">${i+1}</div>
+      <div class="srow-name${p.team==='Batavia Muckdogs'?' dogs':''}">
+        ${p._hot?'⚾ ':''}${p.name}
+        <div style="font-size:10px;color:var(--g4);font-weight:400;margin-top:1px">${p.team}</div>
+      </div>
+      <div class="srow-stat" style="width:46px">${p.era?.toFixed(2)??'—'}</div>
+      <div class="srow-stat">${p.ip??'—'}</div>
+      <div class="srow-stat">${p.k??p.so??'—'}</div>
+      <div class="srow-stat" style="width:50px">${p.whip?.toFixed(2)??'—'}</div>
+    </div>`).join('');
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-hdr">Hitting Leaders
+        <span style="display:flex;gap:4px" class="s10 mu">
+          <span style="width:46px;text-align:center">AVG</span>
+          <span style="width:28px;text-align:center">HR</span>
+          <span style="width:28px;text-align:center">RBI</span>
+          <span style="width:50px;text-align:center">OPS</span>
+        </span>
+      </div>
+      ${hRows||'<div style="padding:16px;text-align:center;color:var(--g5);font-size:13px">No hitting stats yet</div>'}
+    </div>
+    <div class="card">
+      <div class="card-hdr">Pitching Leaders
+        <span style="display:flex;gap:4px" class="s10 mu">
+          <span style="width:46px;text-align:center">ERA</span>
+          <span style="width:28px;text-align:center">IP</span>
+          <span style="width:28px;text-align:center">K</span>
+          <span style="width:50px;text-align:center">WHIP</span>
+        </span>
+      </div>
+      ${pRows||'<div style="padding:16px;text-align:center;color:var(--g5);font-size:13px">No pitching stats yet</div>'}
+    </div>`;
+}
+
+// ══════════════════════════════════════════════════
+//  PITCH AVAILABILITY
+// ══════════════════════════════════════════════════
+function calcAvailability(pitches, days) {
+  if (pitches <= 15) return { s:'green', label:'Available', sub:'' };
+  if (pitches <= 25) {
+    return days >= 1 ? { s:'green', label:'Available', sub:'' }
+                     : { s:'yellow', label:'Maybe', sub:'1 rest day needed' };
+  }
+  if (pitches <= 30) {
+    if (days >= 2) return { s:'green', label:'Available', sub:'' };
+    const n = 2 - days; return { s:'red', label:'Unavailable', sub:`${n} day${n>1?'s':''} needed` };
+  }
+  if (pitches <= 40) {
+    if (days >= 3) return { s:'green', label:'Available', sub:'' };
+    if (days >= 2) return { s:'yellow', label:'Maybe', sub:'1 rest day needed' };
+    const n = 3 - days; return { s:'red', label:'Unavailable', sub:`${n} day${n>1?'s':''} needed` };
+  }
+  if (pitches <= 60) {
+    if (days >= 4) return { s:'green', label:'Available', sub:'' };
+    if (days >= 3) return { s:'yellow', label:'Maybe', sub:'1 rest day needed' };
+    const n = 4 - days; return { s:'red', label:'Unavailable', sub:`${n} day${n>1?'s':''} needed` };
+  }
+  if (pitches <= 70) {
+    if (days >= 5) return { s:'green', label:'Available', sub:'' };
+    if (days >= 4) return { s:'yellow', label:'Maybe', sub:'1 rest day needed' };
+    const n = 5 - days; return { s:'red', label:'Unavailable', sub:`${n} day${n>1?'s':''} needed` };
+  }
+  // 71+ — no yellow phase
+  if (days >= 5) return { s:'green', label:'Available', sub:'' };
+  const n = 5 - days; return { s:'red', label:'Unavailable', sub:`${n} day${n>1?'s':''} needed` };
+}
+
+function daysSince(dateStr) {
+  if (!dateStr) return 99;
+  const d = new Date(dateStr + 'T12:00:00');
+  const today = new Date(); today.setHours(12,0,0,0);
+  return Math.max(0, Math.floor((today - d) / 86400000));
+}
+
+function fmtDate(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+}
+
+function renderPitchAvailability() {
+  const el = document.getElementById('v-pitches-body');
+  if (!el) return;
+  let data = LS.get('pitch_avail') || {};
+
+  // Authoritative Batavia pitcher roster from live stats
+  const statPitchers = (allStats?._pitchers || allStats?.pitchers || [])
+    .filter(p => p.team === 'Batavia Muckdogs');
+  const bataviaNames = new Set(statPitchers.map(p => p.name));
+
+  // Ensure every Batavia stats pitcher has an entry
+  statPitchers.forEach(p => {
+    if (!data[p.name]) data[p.name] = { name: p.name, team:'Batavia Muckdogs', outings:[] };
+  });
+
+  // Build display list: Batavia stats pitchers + any pitcher with logged outings
+  // Box score pitchers (bs_ prefix) use full names; stats pitchers use abbreviated names.
+  // Both are valid Batavia pitchers — include if in stats OR has any outings at all.
+  const displayData = {};
+  Object.entries(data).forEach(([name, entry]) => {
+    const lastName = name.split(' ').slice(-1)[0].toLowerCase();
+    const inBataviaRoster = bataviaNames.has(name)
+      || [...bataviaNames].some(n => n.split(' ').slice(-1)[0].toLowerCase() === lastName);
+    const hasOutings = (entry.outings||[]).length > 0;
+    if (inBataviaRoster || hasOutings) {
+      displayData[name] = entry;
+    }
+  });
+
+  // Persist cleaned data back
+  if (Object.keys(displayData).length !== Object.keys(data).length) {
+    LS.set('pitch_avail', displayData);
+    data = displayData;
+  }
+
+  // Populate datalist for pitch log modal
+  const dl = document.getElementById('pl-name-list');
+  if (dl) dl.innerHTML = Object.keys(data).map(n=>`<option value="${esc(n)}">`).join('');
+
+  const entries = Object.values(data).sort((a,b) => {
+    const aL = a.outings?.slice(-1)[0], bL = b.outings?.slice(-1)[0];
+    const ord = {red:0,yellow:1,green:2};
+    return (ord[calcAvailability(aL?.pitches||0,daysSince(aL?.date)).s]||0)
+          -(ord[calcAvailability(bL?.pitches||0,daysSince(bL?.date)).s]||0);
+  });
+
+  if (!entries.length) {
+    el.innerHTML = `<div class="empty"><h3>No pitchers yet</h3><p>Tap + Log to record an outing, or wait for season stats to load.</p></div>`;
+    return;
+  }
+
+  el.innerHTML = entries.map(p => {
+    const last    = p.outings?.slice(-1)[0];
+    const days    = daysSince(last?.date);
+    const av      = calcAvailability(last?.pitches||0, days);
+    const daysAgo = !last ? '' : days===0 ? 'today' : days===1 ? 'yesterday' : `${days}d ago`;
+    const lastInfo = last ? `Last: ${last.pitches}p · ${daysAgo}` : 'No outings logged — upload chart or tap Log';
+    // Pull live stats for this pitcher (match by full name or last name, since stats use abbreviated names)
+    const pLastName = p.name.split(' ').slice(-1)[0].toLowerCase();
+    const sp = statPitchers.find(x => x.name === p.name || x.name.split(' ').slice(-1)[0].toLowerCase() === pLastName);
+    const statLine = sp && sp.ip > 0 ? `ERA ${sp.era?.toFixed(2)||'—'} · ${sp.ip} IP · ${sp.k||'—'} K` : '';
+    const hist = p.outings?.length ? `
+      <div class="pitch-hist">
+        ${[...p.outings].reverse().slice(0,6).map(o=>`
+          <div class="pitch-chip">
+            <div style="font-size:11px;font-weight:700">${o.pitches}p</div>
+            <div style="font-size:9px;color:var(--g5)">${fmtDate(o.date)}</div>
+          </div>`).join('')}
+      </div>` : '';
+    return `<div class="pitch-card">
+      <div class="pitch-card-body">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:15px;font-weight:700">${p.name}${sp?._hot?' ⚾':''}</div>
+          <div style="font-size:11px;color:var(--g4);margin-top:2px">${lastInfo}</div>
+          ${statLine?`<div style="font-size:10px;color:var(--g5);margin-top:2px">${statLine}</div>`:''}
+        </div>
+        <div class="av-${av.s}" style="flex-shrink:0;min-width:80px">
+          ${av.label}${av.sub?`<div style="font-size:9px;opacity:.8;margin-top:1px">${av.sub}</div>`:''}
+        </div>
+        <button class="btn btn-xs btn-s" style="flex-shrink:0" onclick="openPitchLog('${esc(p.name)}')">Log</button>
+      </div>
+      ${hist}
+    </div>`;
+  }).join('');
+}
+
+function openPitchLog(name) {
+  document.getElementById('pl-name-display').textContent = name ? name : 'Log Outing';
+  document.getElementById('pl-pitcher-name').value = name || '';
+  document.getElementById('pl-pitches').value = '';
+  document.getElementById('pl-date').value = new Date().toISOString().slice(0,10);
+  document.getElementById('pl-notes').value = '';
+  openOv('ov-pitchlog');
+}
+
+function openNewPitchLog() { openPitchLog(''); }
+
+function savePitchLog() {
+  const name   = document.getElementById('pl-pitcher-name').value.trim();
+  const pitches= parseInt(document.getElementById('pl-pitches').value)||0;
+  const date   = document.getElementById('pl-date').value;
+  const notes  = document.getElementById('pl-notes').value.trim();
+  if (!name)   { toast('Enter pitcher name'); return; }
+  if (!pitches){ toast('Enter pitch count'); return; }
+  if (!date)   { toast('Enter date'); return; }
+
+  const data = LS.get('pitch_avail') || {};
+  if (!data[name]) data[name] = { name, team:'Batavia Muckdogs', outings:[] };
+  data[name].outings.push({ id:Date.now().toString(), date, pitches, notes });
+  // Keep outings sorted by date
+  data[name].outings.sort((a,b)=>new Date(a.date)-new Date(b.date));
+  LS.set('pitch_avail', data);
+
+  closeOv('ov-pitchlog');
+  renderPitchAvailability();
+  syncPitchToRailway(name, data[name]);
+  toast('Outing logged ✓');
+}
+
+// Auto-apply pitch counts scraped from box scores into the availability store
+function applyPitchCountsFromStats(pitchCounts) {
+  if (!pitchCounts || !Object.keys(pitchCounts).length) return;
+  const data = LS.get('pitch_avail') || {};
+  // pitchCounts from server are already filtered to Batavia-only (from box score scraping)
+  // No need to cross-check against abbreviated stat names — just use them directly
+  let changed = false;
+  Object.entries(pitchCounts).forEach(([name, outings]) => {
+    if (!outings?.length) return;
+    if (!data[name]) data[name] = { name, team: 'Batavia Muckdogs', outings: [] };
+    const existing = new Set(data[name].outings.map(o => o.date));
+    outings.forEach(o => {
+      if (o.date && !existing.has(o.date) && o.pitches > 0) {
+        data[name].outings.push({ id: `bs_${o.date}_${name}`, date: o.date, pitches: o.pitches, notes: `${o.ip} IP (from box score)` });
+        changed = true;
+      }
+    });
+    if (changed) data[name].outings.sort((a,b) => (a.date||'') > (b.date||'') ? 1 : -1);
+  });
+  if (changed) {
+    LS.set('pitch_avail', data);
+    if (document.getElementById('v-pitches').classList.contains('on')) renderPitchAvailability();
+  }
+}
+
+function handleChartUpload(input) {
+  const f = input.files[0];
+  if (!f) return;
+  toast('Reading chart…');
+  const r = new FileReader();
+  r.onload = e => parseAndApplyChart(e.target.result);
+  r.readAsDataURL(f);
+  input.value = '';
+}
+
+async function parseAndApplyChart(base64) {
+  try {
+    const resp = await fetch(`${RAIL}/api/parse-chart`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64 }),
+      signal: AbortSignal.timeout(28000)
+    });
+    if (!resp.ok) throw new Error('server');
+    const { pitchers = [], bullpen = [], notes = '' } = await resp.json();
+
+    const all = [...pitchers, ...bullpen].filter(e => e.name && e.pitches > 0);
+    if (!all.length) { toast('No pitchers detected — log manually'); return; }
+
+    // Match last names to Batavia roster for full names
+    const roster = (allStats?._pitchers || allStats?.pitchers || [])
+      .filter(p => p.team === 'Batavia Muckdogs');
+    const today = new Date().toISOString().slice(0, 10);
+    const data  = LS.get('pitch_avail') || {};
+    const matched = [];
+
+    all.forEach(entry => {
+      const lastName = entry.name.trim().toLowerCase();
+      const hit = roster.find(p => p.name.trim().split(/\s+/).pop().toLowerCase() === lastName);
+      const fullName = hit ? hit.name : entry.name.trim();
+
+      if (!data[fullName]) data[fullName] = { name: fullName, team: 'Batavia Muckdogs', outings: [] };
+      data[fullName].outings.push({
+        id: Date.now().toString() + Math.random().toString(36).slice(2),
+        date: today, pitches: entry.pitches, notes
+      });
+      data[fullName].outings.sort((a, b) => new Date(a.date) - new Date(b.date));
+      matched.push(fullName);
+    });
+
+    LS.set('pitch_avail', data);
+    matched.forEach(n => syncPitchToRailway(n, data[n]));
+    renderPitchAvailability();
+    toast(`Updated ${matched.length} pitcher${matched.length !== 1 ? 's' : ''} from chart ✓`);
+  } catch {
+    toast('Could not read chart — try again or log manually');
+  }
+}
+
+async function syncPitchToRailway(name, data) {
+  try {
+    await fetch(`${RAIL}/api/pitches/${encodeURIComponent(name)}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(data), signal:AbortSignal.timeout(8000)
+    });
+  } catch {}
+}
+
+async function fetchPitchData() {
+  try {
+    const r = await fetch(`${RAIL}/api/pitches`, { signal:AbortSignal.timeout(8000) });
+    if (!r.ok) return;
+    const cloud = await r.json();
+    const local = LS.get('pitch_avail') || {};
+    Object.entries(cloud).forEach(([name, cd]) => {
+      if (!local[name]) { local[name] = cd; return; }
+      const localIds = new Set(local[name].outings.map(o=>o.id));
+      const newO = (cd.outings||[]).filter(o=>!localIds.has(o.id));
+      if (newO.length) {
+        local[name].outings = [...local[name].outings, ...newO].sort((a,b)=>new Date(a.date)-new Date(b.date));
+      }
+    });
+    LS.set('pitch_avail', local);
+  } catch {}
+}
+
+// ══════════════════════════════════════════════════
+//  GAME SHEETS
+// ══════════════════════════════════════════════════
+function renderGameSheets() {
+  const el = document.getElementById('sheets-list');
+  if (!el) return;
+  const sheets = LS.get('game_sheets') || [];
+  const filter = document.getElementById('sheet-filter')?.value || '';
+  let list = filter ? sheets.filter(s=>s.opponent===filter) : sheets;
+  list = [...list].sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  document.getElementById('sheets-count').textContent = `${list.length} sheet${list.length!==1?'s':''}`;
+  if (!list.length) {
+    el.innerHTML = `<div class="empty" style="padding:28px 20px">
+      <h3 style="font-size:14px">No game sheets yet</h3>
+      <p>After each game, tap + New Sheet to upload your scouting form.</p>
+    </div>`;
+    return;
+  }
+  el.innerHTML = list.map(s => {
+    const thumbs = (s.photos||[]).slice(0,1);
+    const worked = (s.batters||[]).filter(b=>b.planWorked).length;
+    const total  = (s.batters||[]).length;
+    return `<div class="rep-card" onclick="viewGameSheet('${s.id}')">
+      <div class="flex-bc mb8">
+        <div>
+          <div style="font-size:15px;font-weight:700">vs. ${s.opponent}</div>
+          <div class="mu s12">${fmtDate(s.date)}</div>
+        </div>
+        <div style="text-align:right;font-size:11px;color:var(--g4)">
+          ${total} batter${total!==1?'s':''}${total?` · <span style="color:var(--green)">${worked}/${total} plans ✓</span>`:''}
+        </div>
+      </div>
+      ${thumbs.length?`<img src="${thumbs[0]}" style="width:100%;max-height:110px;object-fit:cover;border-radius:8px;margin-bottom:6px">`:''}
+      ${total?`<div style="font-size:11px;color:var(--g5)">${s.batters.slice(0,4).map(b=>b.name).join(' · ')}${s.batters.length>4?' +more':''}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+function openNewSheet() {
+  document.getElementById('gs-opponent').value = '';
+  document.getElementById('gs-date').value = new Date().toISOString().slice(0,10);
+  document.getElementById('gs-photos-prev').innerHTML = '';
+  document.getElementById('gs-batters-list').innerHTML = '';
+  window._gsPhotos  = [];
+  window._gsBatters = [];
+  openOv('ov-gamesheet');
+}
+
+function handleSheetPhoto(input) {
+  Array.from(input.files).forEach(f => {
+    const r = new FileReader();
+    r.onload = e => {
+      window._gsPhotos = window._gsPhotos || [];
+      window._gsPhotos.push(e.target.result);
+      renderSheetPhotoPrev();
+      tryParseSheet(e.target.result);
+    };
+    r.readAsDataURL(f);
+  });
+  input.value = '';
+}
+
+function renderSheetPhotoPrev() {
+  document.getElementById('gs-photos-prev').innerHTML = (window._gsPhotos||[]).map((src,i)=>
+    `<div class="ph-thumb"><img src="${src}">
+     <button class="ph-rm" onclick="window._gsPhotos.splice(${i},1);renderSheetPhotoPrev()">✕</button></div>`
+  ).join('');
+}
+
+async function tryParseSheet(base64) {
+  toast('Sending to AI…');
+  try {
+    const r = await fetch(`${RAIL}/api/parse-sheet`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ image: base64 }), signal:AbortSignal.timeout(25000)
+    });
+    if (!r.ok) throw new Error('not ok');
+    const { batters } = await r.json();
+    if (batters?.length) {
+      window._gsBatters = batters.map(b=>({ name:b.name||'', notes:b.notes||'', result:b.result||'', planWorked:false }));
+      renderBattersList();
+      toast(`AI found ${batters.length} batter${batters.length!==1?'s':''} ✓`);
+    } else { toast('No batters detected — add manually'); }
+  } catch { toast('AI unavailable — add batters manually'); }
+}
+
+function renderBattersList() {
+  document.getElementById('gs-batters-list').innerHTML = (window._gsBatters||[]).map((b,i)=>`
+    <div style="background:var(--g7);border-radius:10px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        <input class="fi" style="flex:1;padding:8px 10px;font-size:13px" placeholder="Batter name"
+          value="${escHtml(b.name)}" oninput="window._gsBatters[${i}].name=this.value">
+        <button onclick="window._gsBatters.splice(${i},1);renderBattersList()"
+          style="background:none;border:none;color:var(--g5);font-size:20px;cursor:pointer;line-height:1">✕</button>
+      </div>
+      <textarea class="fta" rows="2" placeholder="Plan of attack / pitch notes…" style="font-size:12px;padding:8px 10px;margin-bottom:5px"
+        oninput="window._gsBatters[${i}].notes=this.value">${escHtml(b.notes)}</textarea>
+      <textarea class="fta" rows="2" placeholder="Results…" style="font-size:12px;padding:8px 10px"
+        oninput="window._gsBatters[${i}].result=this.value">${escHtml(b.result)}</textarea>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--g3);cursor:pointer">
+        <input type="checkbox" ${b.planWorked?'checked':''} onchange="window._gsBatters[${i}].planWorked=this.checked"
+          style="width:18px;height:18px;accent-color:var(--green)">
+        Plan worked ✓
+      </label>
+    </div>`).join('');
+}
+
+function addBatterRow() {
+  window._gsBatters = window._gsBatters || [];
+  window._gsBatters.push({ name:'', notes:'', result:'', planWorked:false });
+  renderBattersList();
+  setTimeout(()=>{ const ins=document.querySelectorAll('#gs-batters-list .fi'); if(ins.length) ins[ins.length-1].focus(); },60);
+}
+
+function saveGameSheet() {
+  const opponent = document.getElementById('gs-opponent').value;
+  const date     = document.getElementById('gs-date').value;
+  if (!opponent) { toast('Select an opponent'); return; }
+  if (!date)     { toast('Enter game date'); return; }
+
+  const sheet = {
+    id: Date.now().toString(),
+    opponent, date,
+    photos:  (window._gsPhotos  || []).slice(),
+    batters: (window._gsBatters || []).filter(b=>b.name.trim()),
+    createdAt: new Date().toISOString()
+  };
+  const sheets = LS.get('game_sheets') || [];
+  sheets.push(sheet);
+  LS.set('game_sheets', sheets);
+
+  closeOv('ov-gamesheet');
+  renderGameSheets();
+  syncSheetToRailway(sheet);
+  toast('Game sheet saved ✓');
+}
+
+function viewGameSheet(id) {
+  const s = (LS.get('game_sheets')||[]).find(x=>x.id===id);
+  if (!s) return;
+  currentRepKey = 'sheet:' + id;
+  document.getElementById('rv-name').textContent = `vs. ${s.opponent}`;
+  const worked = (s.batters||[]).filter(b=>b.planWorked).length;
+  document.getElementById('rv-body').innerHTML = `
+    <div class="mu s12 mb8">${fmtDate(s.date)}</div>
+    ${(s.photos||[]).map(src=>`<img src="${src}" style="width:100%;border-radius:10px;margin-bottom:10px;cursor:pointer" onclick="fullPhoto(this.src)">`).join('')}
+    ${s.batters?.length ? `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="divlabel" style="margin:0">Batters (${s.batters.length})</div>
+        <div style="font-size:12px;color:var(--green);font-weight:700">${worked}/${s.batters.length} plans worked</div>
+      </div>
+      ${s.batters.map(b=>`
+        <div style="background:var(--g7);border-radius:10px;padding:12px;margin-bottom:8px;border-left:3px solid ${b.planWorked?'var(--green)':'var(--g6)'}">
+          <div class="flex-bc mb8">
+            <div style="font-weight:700;font-size:14px">${escHtml(b.name)}</div>
+            <span style="font-size:11px;font-weight:700;color:${b.planWorked?'var(--green)':'var(--g5)'}">${b.planWorked?'✓ Worked':'—'}</span>
+          </div>
+          ${b.notes ?`<div style="font-size:12px;color:var(--g3);margin-bottom:4px"><span style="color:var(--g5)">Plan: </span>${escHtml(b.notes)}</div>`:''}
+          ${b.result?`<div style="font-size:12px;color:var(--g3)"><span style="color:var(--g5)">Result: </span>${escHtml(b.result)}</div>`:''}
+        </div>`).join('')}` : '<div class="mu s12">No batters logged</div>'}
+  `;
+  openOv('ov-report');
+}
+
+async function syncSheetToRailway(sheet) {
+  try {
+    await fetch(`${RAIL}/api/sheets`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(sheet), signal:AbortSignal.timeout(15000)
+    });
+  } catch {}
+}
+
+async function fetchSheets() {
+  try {
+    const r = await fetch(`${RAIL}/api/sheets`, { signal:AbortSignal.timeout(8000) });
+    if (!r.ok) return;
+    const cloud = await r.json();
+    const local  = LS.get('game_sheets') || [];
+    const localIds = new Set(local.map(s=>s.id));
+    const newSheets = cloud.filter(s=>!localIds.has(s.id));
+    if (newSheets.length) LS.set('game_sheets', [...local, ...newSheets]);
+  } catch {}
+}
+
+// ══════════════════════════════════════════════════
+//  REPORTS LIST
+// ══════════════════════════════════════════════════
+function renderReports() {
+  const scouts = LS.get('scouts') || {};
+  const filter = document.getElementById('rep-filter').value;
+  let entries = Object.values(scouts).filter(s => (s.notes?.length||s.photos?.length));
+  if (filter) entries = entries.filter(e=>e.team===filter);
+  entries.sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0));
+
+  document.getElementById('rep-count').textContent = `${entries.length} report${entries.length!==1?'s':''}`;
+  const el = document.getElementById('rep-list');
+  if (!entries.length) {
+    el.innerHTML = `<div class="empty">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none"><rect x="4" y="3" width="16" height="18" rx="2" stroke="white" stroke-width="1.5"/><path d="M8 8h8M8 12h8M8 16h5" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <h3>No reports yet</h3>
+      <p>Tap any player on a team roster to add notes and photos.</p>
+    </div>`;
+    return;
+  }
+  el.innerHTML = entries.map(e => {
+    const key = `${e.team}||${e.playerName}`;
+    const latestNote = (e.notes||[]).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0];
+    const tp = e.threat ? `<span class="pill ${e.threat==='high'?'pill-r':e.threat==='med'?'pill-y':'pill-gr'}">${e.threat.toUpperCase()}</span>` : '';
+    const gp = e.grade  ? `<span class="pill pill-gr">${e.grade}</span>` : '';
+    const photos = (e.photos||[]).slice(0,3);
+    return `<div class="rep-card" onclick="viewReport('${esc(key)}')">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+        <div>
+          <div style="font-weight:700;font-size:15px">${e.playerName||'—'}</div>
+          <div class="mu s12">${e.team||'—'}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="mu s11">${latestNote?fmtTs(latestNote.createdAt):''}</div>
+          <div style="margin-top:3px;display:flex;gap:3px;justify-content:flex-end">${gp}${tp}</div>
+        </div>
+      </div>
+      ${(e.notes||[]).length ? `<div style="font-size:11px;color:var(--g4);margin-bottom:4px">${e.notes.length} note${e.notes.length!==1?'s':''} · ${(e.photos||[]).length} photo${(e.photos||[]).length!==1?'s':''}</div>` : ''}
+      ${latestNote?`<div style="color:var(--g3);font-size:12px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${latestNote.text}</div>`:''}
+      ${photos.length?`<div style="display:flex;gap:5px;margin-top:7px">${photos.map(s=>`<img src="${s}" style="width:52px;height:52px;border-radius:6px;object-fit:cover">`).join('')}${(e.photos||[]).length>3?`<div style="width:52px;height:52px;border-radius:6px;background:var(--g7);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--g4)">+${e.photos.length-3}</div>`:''}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+function viewReport(key) {
+  const e = (LS.get('scouts')||{})[key];
+  if (!e) return;
+  currentRepKey = key;
+  document.getElementById('rv-name').textContent = e.playerName||'Report';
+  const notes = [...(e.notes||[])].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  const tp = e.threat?`<span class="pill ${e.threat==='high'?'pill-r':e.threat==='med'?'pill-y':'pill-gr'}">${e.threat.toUpperCase()} THREAT</span>`:'';
+  document.getElementById('rv-body').innerHTML = `
+    <div class="mu s12 mb8">${e.team||'—'}</div>
+    ${(e.grade||e.threat)?`<div style="display:flex;gap:6px;margin-bottom:12px">${e.grade?`<span class="pill pill-gr">Grade ${e.grade}/80</span>`:''}${tp}</div>`:''}
+    ${notes.map(n=>`
+      <div class="note-card">
+        <div class="note-ts"><span>${fmtTs(n.createdAt)}${n.updatedAt?' (edited)':''}</span></div>
+        <div class="note-text">${escHtml(n.text)}</div>
+      </div>`).join('')}
+    ${(e.photos||[]).length?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">${e.photos.map(s=>`<img src="${s}" style="border-radius:10px;max-width:100%;max-height:260px;object-fit:contain;cursor:pointer" onclick="fullPhoto(this.src)">`).join('')}</div>`:''}
+  `;
+  openOv('ov-report');
+}
+
+function deleteReport() {
+  if (!currentRepKey||!confirm('Delete this report?')) return;
+  if (currentRepKey.startsWith('sheet:')) {
+    const id = currentRepKey.slice(6);
+    LS.set('game_sheets', (LS.get('game_sheets')||[]).filter(s=>s.id!==id));
+    closeOv('ov-report');
+    renderGameSheets();
+  } else {
+    const s = LS.get('scouts')||{};
+    delete s[currentRepKey];
+    LS.set('scouts', s);
+    closeOv('ov-report');
+    renderReports();
+  }
+  toast('Deleted');
+}
+
+// ══════════════════════════════════════════════════
+//  NAV + UI HELPERS
+// ══════════════════════════════════════════════════
+function setHdr(title, sub, showBack) {
+  document.getElementById('hdr-title').innerHTML = title;
+  document.getElementById('hdr-sub').textContent = sub||'';
+  document.getElementById('back-btn').classList.toggle('show', !!showBack);
+}
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+}
+function goBack() {
+  if (!navStack.length) return;
+  const prev = navStack.pop();
+  showView(prev.view);
+  setHdr(prev.title, prev.sub, navStack.length>0);
+}
+function switchTab(name, btn) {
+  navStack = [];
+  document.querySelectorAll('.tb').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('back-btn').classList.remove('show');
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
+  if (name==='teams')  { document.getElementById('v-teams').classList.add('on');   setHdr('Dawg<span>Data</span>', allStats?'Updated '+timeAgo(allStats.updatedAt):'Loading…'); renderTeamList(); }
+  if (name==='leaders'){ document.getElementById('v-leaders').classList.add('on'); setHdr('League Leaders','PGCBL West · tap player to scout'); renderLeaders(); }
+  if (name==='matrix') { document.getElementById('v-matrix').classList.add('on');  setHdr('Run Matrix','All Batavia pitchers · auto-updating'); renderMatrixView(); }
+  if (name==='pitches'){ document.getElementById('v-pitches').classList.add('on'); setHdr('Pitch Availability','Batavia Muckdogs'); renderPitchAvailability(); }
+  if (name==='reports'){ document.getElementById('v-reports').classList.add('on'); setHdr('Reports','Game sheets · player notes'); renderGameSheets(); renderReports(); }
+}
+function openOv(id)  { document.getElementById(id).classList.add('open'); }
+function closeOv(id) { document.getElementById(id).classList.remove('open'); }
+function toast(msg) {
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('on');
+  setTimeout(()=>el.classList.remove('on'),2400);
+}
+function chip(label,val){return`<div class="stat-chip"><div class="lbl">${label}</div><div class="val">${val}</div></div>`}
+function fmtAvg(v){if(v==null)return'—';return v>=1?v.toFixed(1):'.'+String(Math.round(v*1000)).padStart(3,'0')}
+function esc(s){return(s||'').replace(/'/g,"\\'")}
+function escHtml(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>')}
+function fullPhoto(src){const w=window.open();w.document.write(`<body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${src}" style="max-width:100%;max-height:100vh"></body>`)}
+function timeAgo(iso){
+  if(!iso)return'never';
+  const s=Math.floor((Date.now()-new Date(iso))/1000);
+  if(s<60)return'just now';if(s<3600)return Math.floor(s/60)+'m ago';
+  if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';
+}
+function fmtTs(iso){
+  if(!iso||iso.startsWith('1970'))return'—';
+  const d=new Date(iso);
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+}
+
+// ── PWA ──
+if('serviceWorker' in navigator){
+  const sw=`const C='dd-v10';
+self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll([self.location.href])));self.skipWaiting();});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim();});
+self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(fetch(e.request).then(r=>{const cl=r.clone();caches.open(C).then(c=>c.put(e.request,cl));return r;}).catch(()=>caches.match(e.request)));});`;
+  navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw],{type:'application/javascript'}))).catch(()=>{});
+}
+
+init();
+</script>
+</body>
+</html>
