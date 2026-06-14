@@ -237,6 +237,25 @@ hr{border:none;border-top:1px solid var(--g7);margin:14px 0}
 
     <!-- REPORTS -->
     <div id="v-reports" class="view">
+      <!-- Scout Reports (photo upload) -->
+      <div class="flex-bc mb8">
+        <span style="font-size:13px;font-weight:700">Batter Scout Reports</span>
+        <button class="btn btn-sm btn-p" onclick="openScoutReport()">📸 Upload</button>
+      </div>
+      <div id="scout-reports-list" style="margin-bottom:16px">
+        <div class="mu s12" style="padding:8px 0">No reports yet — tap Upload after a game</div>
+      </div>
+      <hr style="margin-bottom:16px">
+
+      <!-- Pitcher Tendency Reports -->
+      <div class="flex-bc mb8">
+        <span style="font-size:13px;font-weight:700">Pitcher Tendency Reports</span>
+        <button class="btn btn-sm btn-p" onclick="openTendencyReport()">📋 Upload</button>
+      </div>
+      <div id="tendency-reports-list" style="margin-bottom:16px">
+        <div class="mu s12" style="padding:8px 0">No tendency reports yet — tap Upload after scouting</div>
+      </div>
+      <hr style="margin-bottom:16px">
       <!-- Game Sheets -->
       <div class="flex-bc mb8">
         <span style="font-size:13px;font-weight:700">Game Sheets</span>
@@ -315,6 +334,26 @@ hr{border:none;border-top:1px solid var(--g7);margin:14px 0}
     <!-- Live stats -->
     <div id="sc-stats" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
 
+    <!-- Dewey flag — shown when prior scouting approach failed -->
+    <div id="sc-dewey-flag" style="display:none;background:rgba(255,160,0,.12);border:1px solid var(--yellow);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;line-height:1.5"></div>
+
+    <hr>
+
+    <!-- ── PITCHER TENDENCY REPORTS (only visible for pitchers) ── -->
+    <div id="sc-tendency-section" style="display:none">
+      <div class="divlabel">⚾ Pitcher Tendency Reports</div>
+      <div id="sc-tendencies" style="margin-bottom:14px">
+        <div class="mu s12" style="text-align:center;padding:8px 0">Loading…</div>
+      </div>
+      <hr>
+    </div>
+
+    <!-- ── GAME SCOUTING REPORTS (from photo uploads) ── -->
+    <div class="divlabel">📋 Game Scouting Reports</div>
+    <div id="sc-game-reports" style="margin-bottom:14px">
+      <div class="mu s12" style="text-align:center;padding:8px 0">Loading…</div>
+    </div>
+
     <hr>
 
     <!-- ── NOTES SECTION ── -->
@@ -386,9 +425,8 @@ hr{border:none;border-top:1px solid var(--g7);margin:14px 0}
       <button class="mclose" onclick="closeOv('ov-pitchlog')">✕</button>
     </div>
     <div class="fg">
-      <label class="fl">Pitcher Name</label>
-      <input class="fi" id="pl-pitcher-name" type="text" placeholder="Last, First" list="pl-name-list" autocomplete="off">
-      <datalist id="pl-name-list"></datalist>
+      <label class="fl">Pitcher</label>
+      <select class="fsel" id="pl-pitcher-name" style="width:100%"></select>
     </div>
     <div class="frow">
       <div class="fg" style="margin:0">
@@ -400,11 +438,117 @@ hr{border:none;border-top:1px solid var(--g7);margin:14px 0}
         <input class="fi" id="pl-date" type="date">
       </div>
     </div>
+    <div class="fg" style="margin-top:8px">
+      <label class="fl">Outing Type</label>
+      <select class="fsel" id="pl-type" style="width:100%">
+        <option value="Game">Game</option>
+        <option value="Bullpen">Bullpen</option>
+        <option value="Scrimmage">Scrimmage</option>
+      </select>
+    </div>
     <div class="fg mt8">
       <label class="fl">Notes (optional)</label>
-      <textarea class="fta" id="pl-notes" rows="2" placeholder="Stuff working, any concerns…"></textarea>
+      <textarea class="fta" id="pl-notes" rows="2" placeholder="Stuff working, velocity, any concerns…"></textarea>
     </div>
     <button class="btn btn-p btn-bl mt8" onclick="savePitchLog()">Save Outing</button>
+  </div>
+</div>
+
+<!-- ═══ SCOUT REPORT UPLOAD MODAL ═══ -->
+<div class="overlay" id="ov-scout-report">
+  <div class="modal" style="max-height:90vh;overflow-y:auto">
+    <div class="mhdr">
+      <div class="mtitle" id="sr-modal-title">Upload Scout Report</div>
+      <button class="mclose" onclick="closeOv('ov-scout-report')">✕</button>
+    </div>
+
+    <!-- STEP 1: Select game + upload photo -->
+    <div id="sr-step-1">
+      <div class="fg">
+        <label class="fl">Opponent</label>
+        <select class="fsel" id="sr-opponent" style="width:100%">
+          <option value="">— select opponent —</option>
+          <option>Auburn Doubledays</option><option>Elmira Pioneers</option>
+          <option>Geneva Red Wings</option><option>Jamestown Tarp Skunks</option>
+          <option>Newark Pilots</option><option>Niagara Falls Americans</option>
+          <option>Niagara Ironbacks</option><option>Olean Oilers</option>
+        </select>
+      </div>
+      <div class="fg mt8">
+        <label class="fl">Game Date</label>
+        <input class="fi" id="sr-date" type="date">
+      </div>
+      <!-- Large iPhone-friendly upload button -->
+      <input type="file" id="sr-photo-in" accept="image/*" capture="environment" style="display:none" onchange="handleScoutReportUpload(this)">
+      <button class="btn btn-p btn-bl mt8" style="height:64px;font-size:16px;letter-spacing:.5px" onclick="startScoutReportUpload()">
+        📸 &nbsp;Photograph Report Sheet
+      </button>
+      <p class="mu s12" style="text-align:center;margin-top:8px">Take a photo of your completed scouting sheet</p>
+    </div>
+
+    <!-- STEP 2: Parsing in progress -->
+    <div id="sr-step-2" style="display:none;text-align:center;padding:32px 0">
+      <div class="spin" style="width:40px;height:40px;margin:0 auto 16px"></div>
+      <div style="font-weight:600;font-size:15px">Reading your report sheet…</div>
+      <div class="mu s12" style="margin-top:6px">Claude is extracting each batter's data</div>
+    </div>
+
+    <!-- STEP 3: Confirm parsed rows -->
+    <div id="sr-step-3" style="display:none">
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px" id="sr-confirm-header">Review extracted data</div>
+      <div class="mu s12" style="margin-bottom:12px">Tap any name to correct it. Unmatched jersey numbers are highlighted.</div>
+      <div id="sr-confirm-rows"></div>
+      <button class="btn btn-p btn-bl mt8" onclick="saveScoutReport()">Save Report to Railway</button>
+      <button class="btn btn-bl mt8" style="background:none;color:var(--g4);border:1px solid var(--g2)" onclick="scoutReportBack()">← Re-upload</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PITCHER TENDENCY MODAL ═══ -->
+<div class="overlay" id="ov-tendency-report">
+  <div class="modal" style="max-height:90vh;overflow-y:auto">
+    <div class="mhdr">
+      <div class="mtitle">Pitcher Tendency Report</div>
+      <button class="mclose" onclick="closeOv('ov-tendency-report')">✕</button>
+    </div>
+
+    <!-- STEP 1: Select opponent + upload -->
+    <div id="tr-step-1">
+      <div class="fg">
+        <label class="fl">Opponent Team</label>
+        <select class="fsel" id="tr-opponent" style="width:100%">
+          <option value="">— select opponent —</option>
+          <option>Auburn Doubledays</option><option>Elmira Pioneers</option>
+          <option>Geneva Red Wings</option><option>Jamestown Tarp Skunks</option>
+          <option>Newark Pilots</option><option>Niagara Falls Americans</option>
+          <option>Niagara Ironbacks</option><option>Olean Oilers</option>
+        </select>
+      </div>
+      <div class="fg mt8">
+        <label class="fl">Game Date</label>
+        <input class="fi" id="tr-date" type="date">
+      </div>
+      <input type="file" id="tr-photo-in" accept="image/*" capture="environment" style="display:none" onchange="handleTendencyUpload(this)">
+      <button class="btn btn-p btn-bl mt8" style="height:64px;font-size:16px;letter-spacing:.5px" onclick="startTendencyUpload()">
+        📋 &nbsp;Photograph Tendency Chart
+      </button>
+      <p class="mu s12" style="text-align:center;margin-top:8px">Photograph the completed SWAT chart</p>
+    </div>
+
+    <!-- STEP 2: Parsing -->
+    <div id="tr-step-2" style="display:none;text-align:center;padding:32px 0">
+      <div class="spin" style="width:40px;height:40px;margin:0 auto 16px"></div>
+      <div style="font-weight:600;font-size:15px">Reading tendency chart…</div>
+      <div class="mu s12" style="margin-top:6px">Claude is extracting pitcher tendencies</div>
+    </div>
+
+    <!-- STEP 3: Confirm + save -->
+    <div id="tr-step-3" style="display:none">
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px" id="tr-confirm-header">Review extracted data</div>
+      <div id="tr-confirm-body"></div>
+      <button class="btn btn-p btn-bl mt8" onclick="saveTendencyReport()">Save to Railway</button>
+      <button class="btn btn-bl mt8" style="background:none;color:var(--g4);border:1px solid var(--g2)" onclick="tendencyBack()">← Re-upload</button>
+    </div>
   </div>
 </div>
 
@@ -510,7 +654,31 @@ const LS = {
 // ══════════════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════════════
+function cleanPitchAvailDB() {
+  // One-time cleanup: remove localStorage pitch_avail entries with dirty names (W/L parens)
+  const data = LS.get('pitch_avail');
+  if (!data) return;
+  let changed = false;
+  const cleaned = {};
+  Object.entries(data).forEach(([key, entry]) => {
+    const cleanKey = key.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+    if (cleanKey !== key) {
+      // Merge into clean key if it already exists, otherwise rename
+      const target = cleaned[cleanKey] || { ...entry, name: cleanKey, outings: [] };
+      const existing = new Set(target.outings.map(o => o.date));
+      (entry.outings || []).forEach(o => { if (!existing.has(o.date)) target.outings.push(o); });
+      target.outings.sort((a,b) => (a.date||'') > (b.date||'') ? 1 : -1);
+      cleaned[cleanKey] = target;
+      changed = true;
+    } else {
+      cleaned[cleanKey] = entry;
+    }
+  });
+  if (changed) LS.set('pitch_avail', cleaned);
+}
+
 async function init() {
+  cleanPitchAvailDB();
   setHdr('Dawg<span>Data</span>', 'Loading…');
   const cached = LS.get('stats_cache');
   if (cached) { allStats = cached; applyStats(); setHdr('Dawg<span>Data</span>', 'Cached · '+timeAgo(cached.updatedAt)); }
@@ -742,7 +910,7 @@ function renderMatrixView() {
 
     return `<div class="card" style="margin-bottom:14px">
       <div class="card-hdr" style="background:var(--g7)">
-        <span style="font-size:13px;font-weight:800;letter-spacing:0;text-transform:none;color:var(--white)">${p.name}${hot}</span>
+        <span style="font-size:13px;font-weight:800;letter-spacing:0;text-transform:none;color:var(--white)">${p.number?`<span style="font-size:10px;color:var(--g4);font-weight:600;margin-right:4px">#${p.number}</span>`:''}${p.name}${hot}</span>
         <span style="display:flex;gap:10px;font-size:10px;color:var(--g4)">
           <span>ERA <strong style="color:var(--white)">${era}</strong></span>
           <span>WHIP <strong style="color:var(--white)">${wh}</strong></span>
@@ -829,8 +997,53 @@ function openTeam(teamName) {
   navStack.push({ view:'v-teams', title:'Dawg<span>Data</span>', sub:'', back:false });
   showView('v-roster');
   setHdr(teamName, 'Tap any player to scout', true);
-  renderRoster('roster-pitchers','Pitchers',(allStats?._pitchers||allStats?.pitchers||[]).filter(p=>p.team===teamName),false);
-  renderRoster('roster-hitters', 'Hitters', (allStats?._hitters ||allStats?.hitters ||[]).filter(h=>h.team===teamName),true);
+
+  // Primary source: rosters table (full names, numbers, positions)
+  const rosterPlayers = (allStats?.rosters?.[teamName] || []);
+
+  // Stats for overlay — indexed by last name
+  const statPs = Object.fromEntries(
+    (allStats?._pitchers||allStats?.pitchers||[])
+      .filter(p=>p.team===teamName)
+      .map(p=>[p.name.split(' ').pop().toLowerCase(), p])
+  );
+  const statHs = Object.fromEntries(
+    (allStats?._hitters||allStats?.hitters||[])
+      .filter(h=>h.team===teamName)
+      .map(h=>[h.name.split(' ').pop().toLowerCase(), h])
+  );
+
+  const isPitcherPos = pos => pos && /^P(\/|$)/.test(pos.trim());
+  const seen = new Set();
+  const pitchers = [], posPlayers = [];
+
+  // Roster players first (have full names + numbers)
+  rosterPlayers.forEach(rp => {
+    const ln = rp.name.split(' ').pop().toLowerCase();
+    seen.add(ln);
+    const sp = statPs[ln], sh = statHs[ln];
+    const p = { ...rp, team: teamName };
+    if (sp) Object.assign(p, { era:sp.era, whip:sp.whip, ip:sp.ip, k:sp.k, k9:sp.k9, _hot:sp._hot, w:sp.w, sv:sp.sv });
+    if (sh) Object.assign(p, { avg:sh.avg, hr:sh.hr, rbi:sh.rbi, ops:sh.ops, ab:sh.ab, _hot:sh._hot });
+    (isPitcherPos(rp.position) || (sp && !sh)) ? pitchers.push(p) : posPlayers.push(p);
+  });
+
+  // Stats-only players not in roster (no roster entry yet)
+  Object.values(statPs).forEach(sp => {
+    if (!seen.has(sp.name.split(' ').pop().toLowerCase())) {
+      seen.add(sp.name.split(' ').pop().toLowerCase());
+      pitchers.push({ name:sp.name, number:sp.number||'', position:'P', year:'', team:teamName, era:sp.era, whip:sp.whip, ip:sp.ip, k:sp.k, k9:sp.k9, _hot:sp._hot, w:sp.w, sv:sp.sv });
+    }
+  });
+  Object.values(statHs).forEach(sh => {
+    if (!seen.has(sh.name.split(' ').pop().toLowerCase())) {
+      seen.add(sh.name.split(' ').pop().toLowerCase());
+      posPlayers.push({ name:sh.name, number:sh.number||'', position:'', year:'', team:teamName, avg:sh.avg, hr:sh.hr, rbi:sh.rbi, ops:sh.ops, ab:sh.ab, _hot:sh._hot });
+    }
+  });
+
+  renderRoster('roster-pitchers', 'Pitchers', pitchers.sort((a,b)=>(a.era??99)-(b.era??99)), false);
+  renderRoster('roster-hitters', 'Position Players', posPlayers.sort((a,b)=>(b.avg||0)-(a.avg||0)), true);
 }
 
 function renderRoster(elId, label, players, isHitter) {
@@ -839,15 +1052,14 @@ function renderRoster(elId, label, players, isHitter) {
   if (!players.length) {
     el.innerHTML = `<div class="roster-label">${label}</div>
       <div style="padding:18px;text-align:center;color:var(--g5);font-size:13px;background:var(--g8);border-radius:12px;border:1px solid var(--g7)">
-        Stats load once the season begins.<br>
+        No roster data yet.<br>
         <button class="btn btn-sm btn-s" style="margin-top:10px" onclick="openScout('Unknown Player','${esc(currentTeam)}',${isHitter})">+ Scout a player manually</button>
       </div>`;
     return;
   }
-  const sorted = [...players].sort((a,b)=>isHitter?(b.avg||0)-(a.avg||0):(a.era??99)-(b.era??99));
   el.innerHTML = `<div class="roster-label">${label} (${players.length})</div>
     <div style="border-radius:12px;overflow:hidden;border:1px solid var(--g7)">
-    ${sorted.map(p=>{
+    ${players.map(p=>{
       const hot = p._hot?(isHitter?' 🔥':' ⚾'):'';
       const key = `${p.team}||${p.name}`;
       const sc = scouts[key];
@@ -855,26 +1067,29 @@ function renderRoster(elId, label, players, isHitter) {
       const photoCount = sc?.photos?.length||0;
       const dot = sc ? ` <span style="color:var(--red);font-size:11px">●</span>` : '';
       const hint = sc ? `<span style="font-size:10px;color:var(--g5);margin-left:4px">${noteCount?noteCount+'n ':''}${photoCount?photoCount+'p':''}</span>` : '';
+      const numBadge = p.number ? `<span style="font-size:10px;color:var(--g4);font-weight:600;margin-right:5px">#${p.number}</span>` : '';
+      const posBadge = p.position ? `<span style="font-size:10px;color:var(--g5);margin-left:5px">${p.position}</span>` : '';
+      const hasStats = isHitter ? (p.ab > 0) : (p.ip > 0);
       if (isHitter) {
         return `<div class="player-row" onclick="openScout('${esc(p.name)}','${esc(p.team)}',true)">
-          <div class="pname">${p.name}${hot}${dot}${hint}</div>
-          <div class="pstats">
+          <div class="pname">${numBadge}${p.name}${hot}${dot}${hint}${posBadge}</div>
+          ${hasStats ? `<div class="pstats">
             <div class="ps"><div class="v">${fmtAvg(p.avg)}</div><div class="l">AVG</div></div>
             <div class="ps"><div class="v">${p.hr??'—'}</div><div class="l">HR</div></div>
             <div class="ps"><div class="v">${p.rbi??'—'}</div><div class="l">RBI</div></div>
             <div class="ps"><div class="v">${p.ops?p.ops.toFixed(3):'—'}</div><div class="l">OPS</div></div>
-          </div>
+          </div>` : `<div style="font-size:10px;color:var(--g6);padding-right:10px">No stats yet</div>`}
         </div>`;
       } else {
         const vc = p.era!=null?(p.era<2.5?'color:var(--green)':p.era>5.0?'color:var(--red-l)':''):'';
         return `<div class="player-row" onclick="openScout('${esc(p.name)}','${esc(p.team)}',false)">
-          <div class="pname">${p.name}${hot}${dot}${hint}</div>
-          <div class="pstats">
+          <div class="pname">${numBadge}${p.name}${hot}${dot}${hint}${posBadge}</div>
+          ${hasStats ? `<div class="pstats">
             <div class="ps"><div class="v" style="${vc}">${p.era?.toFixed(2)??'—'}</div><div class="l">ERA</div></div>
             <div class="ps"><div class="v">${p.whip?.toFixed(2)??'—'}</div><div class="l">WHIP</div></div>
             <div class="ps"><div class="v">${p.ip??'—'}</div><div class="l">IP</div></div>
             <div class="ps"><div class="v">${p.k9?.toFixed(1)??'—'}</div><div class="l">K/9</div></div>
-          </div>
+          </div>` : `<div style="font-size:10px;color:var(--g6);padding-right:10px">No stats yet</div>`}
         </div>`;
       }
     }).join('')}
@@ -914,8 +1129,283 @@ function openScout(playerName, teamName, isHitter) {
   loadScoutModal();
   document.getElementById('sc-new-note').value = '';
   openOv('ov-scout');
-  // Scroll to top of modal
   setTimeout(()=>{ const m=document.getElementById('scout-modal-inner'); if(m) m.parentElement.scrollTop=0; },50);
+
+  // Dewey flag — check if our approach failed on this player in a prior game
+  checkDeweyFlag(playerName, teamName);
+
+  // Game scouting reports from photo uploads
+  loadGameScoutingReports(playerName);
+
+  // Pitcher tendency reports (only for non-Batavia pitchers)
+  const tendSec = document.getElementById('sc-tendency-section');
+  if (!isHitter && teamName !== 'Batavia Muckdogs') {
+    tendSec.style.display = '';
+    loadPitcherTendencies(playerName);
+  } else {
+    tendSec.style.display = 'none';
+  }
+}
+
+async function checkDeweyFlag(playerName, teamName) {
+  // Only flag opponent players (not Batavia)
+  if (teamName === 'Batavia Muckdogs') return;
+  const deweyEl = document.getElementById('sc-dewey-flag');
+  if (!deweyEl) return;
+  deweyEl.style.display = 'none';
+  try {
+    const r = await fetch(`${RAIL}/api/game-scouting?player=${encodeURIComponent(playerName)}`, { signal: AbortSignal.timeout(6000) });
+    const reports = await r.json();
+    const failures = reports.filter(x => x.success === false);
+    if (failures.length) {
+      const last = failures[0];
+      deweyEl.innerHTML = `⚠️ <b>Coach —</b> our approach on <b>${esc(playerName)}</b> did NOT work vs ${esc(last.opponent||teamName)} on ${fmtDate(last.date)}. You may want to reassess.`;
+      deweyEl.style.display = 'block';
+    }
+  } catch {}
+}
+
+async function loadGameScoutingReports(playerName) {
+  const el = document.getElementById('sc-game-reports');
+  if (!el) return;
+  el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0">Loading…</div>';
+  try {
+    const r = await fetch(`${RAIL}/api/game-scouting?player=${encodeURIComponent(playerName)}`, { signal: AbortSignal.timeout(8000) });
+    const reports = await r.json();
+    if (!Array.isArray(reports) || !reports.length) {
+      el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0">No scouting reports yet</div>';
+      return;
+    }
+    el.innerHTML = reports.map(rep => {
+      const worked = rep.success === true;
+      const failed = rep.success === false;
+      const icon   = worked ? '✓' : failed ? '✗' : '—';
+      const iconColor = worked ? 'var(--green)' : failed ? 'var(--red)' : 'var(--g4)';
+      return `
+        <div style="border:1px solid ${failed?'var(--red)':'var(--g2)'};border-radius:10px;padding:12px;margin-bottom:10px;background:${failed?'rgba(255,60,60,.04)':'var(--card)'}">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span style="font-weight:700;font-size:13px">${esc(rep.opponent||'Unknown')}</span>
+            <span class="mu s11">${rep.date?fmtDate(rep.date):''}</span>
+            <span style="margin-left:auto;font-size:20px;font-weight:800;color:${iconColor}">${icon}</span>
+          </div>
+          ${failed ? `<div style="background:rgba(255,60,60,.12);border:1px solid var(--red);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;color:var(--red);margin-bottom:8px">🚩 Reassess approach for this player</div>` : ''}
+          ${rep.plan      ? `<div style="margin-bottom:6px"><div class="mu s11" style="margin-bottom:2px">Plan of Attack</div><div style="font-size:12px;line-height:1.5">${esc(rep.plan)}</div></div>` : ''}
+          ${rep.shadeNotes? `<div style="margin-bottom:6px"><div class="mu s11" style="margin-bottom:2px">Spray Chart</div><div style="font-size:12px;line-height:1.5">${esc(rep.shadeNotes)}</div></div>` : ''}
+          ${rep.results   ? `<div><div class="mu s11" style="margin-bottom:2px">Results</div><div style="font-size:12px;line-height:1.5">${esc(rep.results)}</div></div>` : ''}
+        </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0;color:var(--red)">Could not load reports</div>';
+  }
+}
+
+// ── Pitcher Tendency Reports ──────────────────────────────────────────────────
+
+async function loadPitcherTendencies(pitcherName) {
+  const el = document.getElementById('sc-tendencies');
+  if (!el) return;
+  el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0">Loading…</div>';
+  try {
+    const r = await fetch(`${RAIL}/api/pitcher-tendency?pitcher=${encodeURIComponent(pitcherName)}`, { signal: AbortSignal.timeout(8000) });
+    const reports = await r.json();
+    if (!Array.isArray(reports) || !reports.length) {
+      el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0">No tendency reports yet</div>';
+      return;
+    }
+    el.innerHTML = reports.map(rep => {
+      const sections = [];
+      const r1 = rep.runner1b || {};
+      const r2 = rep.runner2b || {};
+      if (r1.delivery_tendencies || r1.fb_time || r1.os_time || r1.pick_desc || r1.pick_counts) {
+        const lines = [];
+        if (r1.delivery_tendencies) lines.push(`<b>Tendencies:</b> ${esc(r1.delivery_tendencies)}`);
+        if (r1.fb_time) lines.push(`<b>FB Time:</b> ${esc(r1.fb_time)}`);
+        if (r1.os_time) lines.push(`<b>OS Time:</b> ${esc(r1.os_time)}`);
+        if (r1.pick_desc) lines.push(`<b>Pick Desc:</b> ${esc(r1.pick_desc)}`);
+        if (r1.pick_counts) lines.push(`<b>Pick Counts:</b> ${esc(r1.pick_counts)}`);
+        sections.push(tendSection('🏃 Runner at 1B', lines.join('<br>')));
+      }
+      if (r2.looks || r2.delivery_times || r2.picks) {
+        const lines = [];
+        if (r2.looks) lines.push(`<b>Looks:</b> ${esc(r2.looks)}`);
+        if (r2.delivery_times) lines.push(`<b>Times:</b> ${esc(r2.delivery_times)}`);
+        if (r2.picks) lines.push(`<b>Picks:</b> ${esc(r2.picks)}`);
+        sections.push(tendSection('🏃🏃 Runner at 2B', lines.join('<br>')));
+      }
+      if (rep.prePitch) sections.push(tendSection('👀 Pre-Pitch Movements', esc(rep.prePitch)));
+      if (rep.setPosition) sections.push(tendSection('🧍 Set Position', esc(rep.setPosition)));
+      if (rep.firstMoves) sections.push(tendSection('⚡ First Moves to Pitch', esc(rep.firstMoves)));
+      if (rep.notes) sections.push(tendSection('📝 Notes', esc(rep.notes)));
+      return `
+        <div style="border:1px solid var(--g2);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--card)">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="font-weight:700;font-size:13px">${esc(rep.opponent||'Unknown')}</span>
+            ${rep.date ? `<span class="mu s11">${fmtDate(rep.date)}</span>` : ''}
+            ${rep.handedness ? `<span style="font-size:11px;background:var(--g1);border-radius:4px;padding:2px 6px">${esc(rep.handedness)}HP</span>` : ''}
+          </div>
+          ${sections.join('')}
+        </div>`;
+    }).join('');
+  } catch {
+    el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0;color:var(--red)">Could not load tendencies</div>';
+  }
+}
+
+function tendSection(label, content) {
+  if (!content) return '';
+  return `<div style="margin-bottom:8px">
+    <div style="font-size:11px;font-weight:700;color:var(--p);margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">${label}</div>
+    <div style="font-size:12px;line-height:1.6;color:var(--fg)">${content}</div>
+  </div>`;
+}
+
+// Tendency report upload flow
+let tendencyParsedData = null;
+
+function openTendencyReport() {
+  tendencyParsedData = null;
+  document.getElementById('tr-date').value = new Date().toISOString().slice(0,10);
+  showTendStep(1);
+  openOv('ov-tendency-report');
+}
+
+function showTendStep(n) {
+  [1,2,3].forEach(i => {
+    const el = document.getElementById(`tr-step-${i}`);
+    if (el) el.style.display = i===n ? '' : 'none';
+  });
+}
+
+function startTendencyUpload() {
+  const opp = document.getElementById('tr-opponent').value;
+  if (!opp) { toast('Select an opponent first'); return; }
+  document.getElementById('tr-photo-in').click();
+}
+
+function handleTendencyUpload(input) {
+  const f = input.files[0];
+  if (!f) return;
+  showTendStep(2);
+  const img = new Image();
+  const url = URL.createObjectURL(f);
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const MAX = 2000;
+    let w = img.width, h = img.height;
+    if (w > MAX || h > MAX) { const ratio = Math.min(MAX/w, MAX/h); w=Math.round(w*ratio); h=Math.round(h*ratio); }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    parseTendencyReport(canvas.toDataURL('image/jpeg', 0.92));
+  };
+  img.src = url;
+  input.value = '';
+}
+
+async function parseTendencyReport(base64) {
+  const opponent = document.getElementById('tr-opponent').value;
+  try {
+    const resp = await fetch(`${RAIL}/api/parse-tendency-report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64, opponent }),
+      signal: AbortSignal.timeout(50000),
+    });
+    const { data, matched_name } = await resp.json();
+    if (!data || (!data.pitcher_name && !data.pitcher_number)) {
+      toast('Could not read chart — make sure the full page is in frame and well-lit');
+      showTendStep(1);
+      return;
+    }
+    if (matched_name && !data.pitcher_name) data.pitcher_name = matched_name;
+    tendencyParsedData = data;
+    renderTendencyConfirm(data, opponent);
+    showTendStep(3);
+  } catch {
+    toast('Upload failed — check connection');
+    showTendStep(1);
+  }
+}
+
+function renderTendencyConfirm(data, opponent) {
+  document.getElementById('tr-confirm-header').textContent =
+    `${data.pitcher_name || 'Unknown Pitcher'} #${data.pitcher_number || '?'} · ${opponent}`;
+  const r1 = data.runner_1b || {};
+  const r2 = data.runner_2b || {};
+  const rows = [
+    ['Pitcher', `${data.pitcher_name||'—'} #${data.pitcher_number||'?'} · ${data.handedness||'?'}HP`],
+    ['1B Tendencies', r1.delivery_tendencies||'—'],
+    ['1B FB/OS Times', `FB: ${r1.fb_time||'—'} · OS: ${r1.os_time||'—'}`],
+    ['1B Picks', r1.pick_desc||'—'],
+    ['2B Looks/Times', `${r2.looks||'—'} looks · ${r2.delivery_times||'—'}`],
+    ['2B Picks', r2.picks||'—'],
+    ['Pre-Pitch', data.pre_pitch||'—'],
+    ['Set Position', data.set_position||'—'],
+    ['First Moves', data.first_moves||'—'],
+    ['Notes', data.notes||'—'],
+  ];
+  document.getElementById('tr-confirm-body').innerHTML = rows.map(([label, val]) =>
+    `<div style="margin-bottom:8px;padding:8px 10px;background:var(--g7);border-radius:8px">
+      <div style="font-size:10px;font-weight:700;color:var(--p);text-transform:uppercase;margin-bottom:2px">${esc(label)}</div>
+      <div style="font-size:12px;line-height:1.5">${esc(val)}</div>
+    </div>`
+  ).join('');
+}
+
+function tendencyBack() { showTendStep(1); }
+
+async function saveTendencyReport() {
+  if (!tendencyParsedData) return;
+  const opponent  = document.getElementById('tr-opponent').value;
+  const game_date = document.getElementById('tr-date').value;
+  try {
+    const resp = await fetch(`${RAIL}/api/pitcher-tendency`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ opponent, game_date, data: tendencyParsedData }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const result = await resp.json();
+    if (result.success) {
+      toast('Tendency report saved ✓');
+      closeOv('ov-tendency-report');
+      loadTendencyReportsList();
+    } else {
+      toast('Save failed — try again');
+    }
+  } catch {
+    toast('Save failed — check connection');
+  }
+}
+
+async function loadTendencyReportsList() {
+  const el = document.getElementById('tendency-reports-list');
+  if (!el) return;
+  try {
+    const r = await fetch(`${RAIL}/api/pitcher-tendency`, { signal: AbortSignal.timeout(8000) });
+    const reports = await r.json();
+    if (!reports.length) {
+      el.innerHTML = '<div class="mu s12" style="padding:8px 0">No tendency reports yet — tap Upload after scouting</div>';
+      return;
+    }
+    // Group by opponent
+    const byOpp = {};
+    reports.forEach(rep => {
+      const key = rep.opponent || 'Unknown';
+      if (!byOpp[key]) byOpp[key] = [];
+      byOpp[key].push(rep);
+    });
+    el.innerHTML = Object.entries(byOpp).map(([opp, reps]) => `
+      <div style="margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--p);margin-bottom:4px">${esc(opp)}</div>
+        ${reps.map(rep => `
+          <div style="padding:8px 10px;background:var(--card);border:1px solid var(--g2);border-radius:8px;margin-bottom:4px;display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;font-weight:600">${esc(rep.pitcherName||'Unknown')} #${esc(rep.number||'?')}</span>
+            <span style="font-size:11px;background:var(--g1);border-radius:4px;padding:2px 5px">${esc(rep.handedness||'?')}HP</span>
+            ${rep.date ? `<span class="mu s11">${fmtDate(rep.date)}</span>` : ''}
+          </div>`).join('')}
+      </div>`).join('');
+  } catch {}
 }
 
 function loadScoutModal() {
@@ -1164,7 +1654,7 @@ function renderLeaders() {
     <div class="srow" style="cursor:pointer" onclick="openScout('${esc(h.name)}','${esc(h.team)}',true)">
       <div class="srow-rank">${i+1}</div>
       <div class="srow-name${h.team==='Batavia Muckdogs'?' dogs':''}">
-        ${h._hot?'🔥 ':''}${h.name}
+        ${h._hot?'🔥 ':''}${h.number?`<span style="font-size:10px;color:var(--g4);font-weight:600;margin-right:3px">#${h.number}</span>`:''}${h.name}
         <div style="font-size:10px;color:var(--g4);font-weight:400;margin-top:1px">${h.team}</div>
       </div>
       <div class="srow-stat" style="width:46px">${fmtAvg(h.avg)}</div>
@@ -1177,7 +1667,7 @@ function renderLeaders() {
     <div class="srow" style="cursor:pointer" onclick="openScout('${esc(p.name)}','${esc(p.team)}',false)">
       <div class="srow-rank">${i+1}</div>
       <div class="srow-name${p.team==='Batavia Muckdogs'?' dogs':''}">
-        ${p._hot?'⚾ ':''}${p.name}
+        ${p._hot?'⚾ ':''}${p.number?`<span style="font-size:10px;color:var(--g4);font-weight:600;margin-right:3px">#${p.number}</span>`:''}${p.name}
         <div style="font-size:10px;color:var(--g4);font-weight:400;margin-top:1px">${p.team}</div>
       </div>
       <div class="srow-stat" style="width:46px">${p.era?.toFixed(2)??'—'}</div>
@@ -1260,120 +1750,182 @@ function fmtDate(dateStr) {
 function renderPitchAvailability() {
   const el = document.getElementById('v-pitches-body');
   if (!el) return;
-  let data = LS.get('pitch_avail') || {};
 
-  // Authoritative Batavia pitcher roster from live stats
+  // Pull exclusively from pitch_availability table (Batavia Muckdogs), via allStats.pitchCounts
+  const pitchCounts = allStats?.pitchCounts || {};
+
+  // Also grab Batavia stat pitchers so we can show #number and include anyone not yet in pitchCounts
   const statPitchers = (allStats?._pitchers || allStats?.pitchers || [])
     .filter(p => p.team === 'Batavia Muckdogs');
-  const bataviaNames = new Set(statPitchers.map(p => p.name));
 
-  // Ensure every Batavia stats pitcher has an entry
-  statPitchers.forEach(p => {
-    if (!data[p.name]) data[p.name] = { name: p.name, team:'Batavia Muckdogs', outings:[] };
-  });
+  // Build entries — one per pitcher, deduplicated by last name
+  const seenLastNames = new Set();
+  const entries = [];
 
-  // Build display list: Batavia stats pitchers + any pitcher with logged outings
-  // Box score pitchers (bs_ prefix) use full names; stats pitchers use abbreviated names.
-  // Both are valid Batavia pitchers — include if in stats OR has any outings at all.
-  const displayData = {};
-  Object.entries(data).forEach(([name, entry]) => {
+  // First: pitchers with recorded outings from pitch_availability
+  Object.entries(pitchCounts).forEach(([name, outings]) => {
     const lastName = name.split(' ').slice(-1)[0].toLowerCase();
-    const inBataviaRoster = bataviaNames.has(name)
-      || [...bataviaNames].some(n => n.split(' ').slice(-1)[0].toLowerCase() === lastName);
-    const hasOutings = (entry.outings||[]).length > 0;
-    if (inBataviaRoster || hasOutings) {
-      displayData[name] = entry;
-    }
+    if (seenLastNames.has(lastName)) return; // skip duplicate
+    seenLastNames.add(lastName);
+    const sp = statPitchers.find(p => p.name.split(' ').slice(-1)[0].toLowerCase() === lastName);
+    entries.push({ name, number: sp?.number || '', outing: outings?.[0] || null, sp });
   });
 
-  // Persist cleaned data back
-  if (Object.keys(displayData).length !== Object.keys(data).length) {
-    LS.set('pitch_avail', displayData);
-    data = displayData;
-  }
-
-  // Populate datalist for pitch log modal
-  const dl = document.getElementById('pl-name-list');
-  if (dl) dl.innerHTML = Object.keys(data).map(n=>`<option value="${esc(n)}">`).join('');
-
-  const entries = Object.values(data).sort((a,b) => {
-    const aL = a.outings?.slice(-1)[0], bL = b.outings?.slice(-1)[0];
-    const ord = {red:0,yellow:1,green:2};
-    return (ord[calcAvailability(aL?.pitches||0,daysSince(aL?.date)).s]||0)
-          -(ord[calcAvailability(bL?.pitches||0,daysSince(bL?.date)).s]||0);
+  // Then: Batavia stat pitchers with no outing record yet
+  statPitchers.forEach(p => {
+    const lastName = p.name.split(' ').slice(-1)[0].toLowerCase();
+    if (seenLastNames.has(lastName)) return;
+    seenLastNames.add(lastName);
+    entries.push({ name: p.name, number: p.number || '', outing: null, sp: p });
   });
+
+  // Finally: Batavia roster pitchers (RHP/LHP/P/SP/RP) not yet in stats or pitchCounts
+  // This covers newly-added players like Logan Thomas who haven't appeared in a game yet
+  const isPitcherPos = pos => pos && /^(RHP|LHP|SP|RP|P)(\/|$)/i.test(pos.trim());
+  (allStats?.rosters?.['Batavia Muckdogs'] || []).forEach(rp => {
+    if (!isPitcherPos(rp.position)) return;
+    const lastName = rp.name.split(' ').slice(-1)[0].toLowerCase();
+    if (seenLastNames.has(lastName)) return;
+    seenLastNames.add(lastName);
+    entries.push({ name: rp.name, number: rp.number || '', outing: null, sp: null });
+  });
+
+  // Sort: red → yellow → green → no outings
+  const ord = { red: 0, yellow: 1, green: 2 };
+  entries.sort((a, b) => {
+    const aAv = calcAvailability(a.outing?.pitches || 0, daysSince(a.outing?.date));
+    const bAv = calcAvailability(b.outing?.pitches || 0, daysSince(b.outing?.date));
+    if (!a.outing && !b.outing) return 0;
+    if (!a.outing) return 1;
+    if (!b.outing) return -1;
+    return (ord[aAv.s] ?? 3) - (ord[bAv.s] ?? 3);
+  });
+
+  // (datalist no longer used — pitcher select is built dynamically in openPitchLog)
 
   if (!entries.length) {
-    el.innerHTML = `<div class="empty"><h3>No pitchers yet</h3><p>Tap + Log to record an outing, or wait for season stats to load.</p></div>`;
+    el.innerHTML = `<div class="empty"><h3>No pitchers yet</h3><p>Stats load automatically once the season begins.</p></div>`;
     return;
   }
 
   el.innerHTML = entries.map(p => {
-    const last    = p.outings?.slice(-1)[0];
-    const days    = daysSince(last?.date);
-    const av      = calcAvailability(last?.pitches||0, days);
-    const daysAgo = !last ? '' : days===0 ? 'today' : days===1 ? 'yesterday' : `${days}d ago`;
-    const lastInfo = last ? `Last: ${last.pitches}p · ${daysAgo}` : 'No outings logged — upload chart or tap Log';
-    // Pull live stats for this pitcher (match by full name or last name, since stats use abbreviated names)
-    const pLastName = p.name.split(' ').slice(-1)[0].toLowerCase();
-    const sp = statPitchers.find(x => x.name === p.name || x.name.split(' ').slice(-1)[0].toLowerCase() === pLastName);
-    const statLine = sp && sp.ip > 0 ? `ERA ${sp.era?.toFixed(2)||'—'} · ${sp.ip} IP · ${sp.k||'—'} K` : '';
-    const hist = p.outings?.length ? `
-      <div class="pitch-hist">
-        ${[...p.outings].reverse().slice(0,6).map(o=>`
-          <div class="pitch-chip">
-            <div style="font-size:11px;font-weight:700">${o.pitches}p</div>
-            <div style="font-size:9px;color:var(--g5)">${fmtDate(o.date)}</div>
-          </div>`).join('')}
-      </div>` : '';
+    const days    = daysSince(p.outing?.date);
+    const av      = calcAvailability(p.outing?.pitches || 0, days);
+    const daysAgo = !p.outing ? '' : days === 0 ? 'today' : days === 1 ? 'yesterday' : `${days}d ago`;
+    const isManual   = p.outing?.isManual || false;
+    const outingType = p.outing?.outingType || 'Game';
+    const typeLabel  = outingType !== 'Game' ? ` · ${outingType}` : '';
+    const manualBadge = isManual
+      ? `<span style="font-size:9px;background:var(--p);color:#fff;border-radius:4px;padding:1px 5px;margin-left:5px;vertical-align:middle">✏ Manual</span>`
+      : '';
+    const lastInfo = p.outing
+      ? `${p.outing.pitches}p · ${p.outing.ip} IP · ${fmtDate(p.outing.date)} · ${daysAgo}${typeLabel}`
+      : 'No outings recorded';
+    const notesLine = (isManual && p.outing?.notes)
+      ? `<div style="font-size:10px;color:var(--g4);margin-top:2px;font-style:italic">${esc(p.outing.notes)}</div>`
+      : '';
+    const numTag = p.number ? `<span style="font-size:11px;color:var(--g4);font-weight:600;margin-right:5px">#${p.number}</span>` : '';
+    const clearBtn = isManual
+      ? `<button class="btn btn-xs" style="flex-shrink:0;color:var(--g4);background:none;border:1px solid var(--g2)" onclick="clearManualPitch('${esc(p.name)}')">✕</button>`
+      : '';
     return `<div class="pitch-card">
       <div class="pitch-card-body">
         <div style="flex:1;min-width:0">
-          <div style="font-size:15px;font-weight:700">${p.name}${sp?._hot?' ⚾':''}</div>
+          <div style="font-size:15px;font-weight:700">${numTag}${p.name}${p.sp?._hot?' ⚾':''}${manualBadge}</div>
           <div style="font-size:11px;color:var(--g4);margin-top:2px">${lastInfo}</div>
-          ${statLine?`<div style="font-size:10px;color:var(--g5);margin-top:2px">${statLine}</div>`:''}
+          ${p.outing ? `<div style="font-size:10px;color:var(--g5);margin-top:2px">${days} day${days!==1?'s':''} rest</div>` : ''}
+          ${notesLine}
         </div>
         <div class="av-${av.s}" style="flex-shrink:0;min-width:80px">
-          ${av.label}${av.sub?`<div style="font-size:9px;opacity:.8;margin-top:1px">${av.sub}</div>`:''}
+          ${av.label}${av.sub ? `<div style="font-size:9px;opacity:.8;margin-top:1px">${av.sub}</div>` : ''}
         </div>
+        ${clearBtn}
         <button class="btn btn-xs btn-s" style="flex-shrink:0" onclick="openPitchLog('${esc(p.name)}')">Log</button>
       </div>
-      ${hist}
     </div>`;
   }).join('');
 }
 
 function openPitchLog(name) {
+  // Populate pitcher dropdown from Batavia roster
+  const sel = document.getElementById('pl-pitcher-name');
+  const pitchers = (allStats?._pitchers || allStats?.pitchers || [])
+    .filter(p => p.team === 'Batavia Muckdogs')
+    .map(p => p.name);
+  // Also include anyone already in pitchCounts but not in stats
+  const pcNames = Object.keys(allStats?.pitchCounts || {});
+  // Also include roster pitchers (RHP/LHP/P) not yet in stats — e.g. Logan Thomas
+  const isPitcherPos = pos => pos && /^(RHP|LHP|SP|RP|P)(\/|$)/i.test(pos.trim());
+  const rosterNames = (allStats?.rosters?.['Batavia Muckdogs'] || [])
+    .filter(rp => isPitcherPos(rp.position)).map(rp => rp.name);
+  const allNames = [...new Set([...pitchers, ...pcNames, ...rosterNames])].sort();
+  sel.innerHTML = '<option value="">— select pitcher —</option>' +
+    allNames.map(n => `<option value="${esc(n)}"${n===name?' selected':''}>${esc(n)}</option>`).join('');
+
   document.getElementById('pl-name-display').textContent = name ? name : 'Log Outing';
-  document.getElementById('pl-pitcher-name').value = name || '';
   document.getElementById('pl-pitches').value = '';
   document.getElementById('pl-date').value = new Date().toISOString().slice(0,10);
+  document.getElementById('pl-type').value = 'Game';
   document.getElementById('pl-notes').value = '';
   openOv('ov-pitchlog');
 }
 
 function openNewPitchLog() { openPitchLog(''); }
 
-function savePitchLog() {
-  const name   = document.getElementById('pl-pitcher-name').value.trim();
-  const pitches= parseInt(document.getElementById('pl-pitches').value)||0;
-  const date   = document.getElementById('pl-date').value;
-  const notes  = document.getElementById('pl-notes').value.trim();
-  if (!name)   { toast('Enter pitcher name'); return; }
-  if (!pitches){ toast('Enter pitch count'); return; }
-  if (!date)   { toast('Enter date'); return; }
+async function savePitchLog() {
+  const name      = document.getElementById('pl-pitcher-name').value.trim();
+  const pitches   = parseInt(document.getElementById('pl-pitches').value) || 0;
+  const date      = document.getElementById('pl-date').value;
+  const outingType= document.getElementById('pl-type').value || 'Game';
+  const notes     = document.getElementById('pl-notes').value.trim();
+  if (!name)    { toast('Select a pitcher'); return; }
+  if (!pitches) { toast('Enter pitch count'); return; }
+  if (!date)    { toast('Enter date'); return; }
 
-  const data = LS.get('pitch_avail') || {};
-  if (!data[name]) data[name] = { name, team:'Batavia Muckdogs', outings:[] };
-  data[name].outings.push({ id:Date.now().toString(), date, pitches, notes });
-  // Keep outings sorted by date
-  data[name].outings.sort((a,b)=>new Date(a.date)-new Date(b.date));
-  LS.set('pitch_avail', data);
+  const btn = document.querySelector('#ov-pitchlog .btn-p');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
-  closeOv('ov-pitchlog');
-  renderPitchAvailability();
-  syncPitchToRailway(name, data[name]);
-  toast('Outing logged ✓');
+  try {
+    const resp = await fetch(`${RAIL}/api/manual-pitch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, date, pitches, outingType, notes }),
+      signal: AbortSignal.timeout(10000)
+    });
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Save failed');
+
+    // Update allStats.pitchCounts immediately from the returned availability list
+    if (data.availability && allStats) {
+      const newCounts = {};
+      data.availability.forEach(r => {
+        newCounts[r.name] = [{ date: r.lastDate, pitches: r.pitches, ip: r.ip,
+                               isManual: r.isManual, outingType: r.outingType, notes: r.notes }];
+      });
+      allStats.pitchCounts = newCounts;
+    }
+
+    closeOv('ov-pitchlog');
+    renderPitchAvailability();
+    toast(`${outingType} logged for ${name.split(' ').pop()} ✓`);
+  } catch (e) {
+    toast('Save failed — check connection');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Outing'; }
+  }
+}
+
+async function clearManualPitch(name) {
+  if (!confirm(`Clear manual log for ${name}? The next scrape will restore their PGCBL stats.`)) return;
+  try {
+    await fetch(`${RAIL}/api/manual-pitch/${encodeURIComponent(name)}`, {
+      method: 'DELETE', signal: AbortSignal.timeout(8000)
+    });
+    // Remove from local pitchCounts
+    if (allStats?.pitchCounts) delete allStats.pitchCounts[name];
+    renderPitchAvailability();
+    toast('Manual entry cleared');
+  } catch { toast('Could not clear entry'); }
 }
 
 // Auto-apply pitch counts scraped from box scores into the availability store
@@ -1480,6 +2032,214 @@ async function fetchPitchData() {
     });
     LS.set('pitch_avail', local);
   } catch {}
+}
+
+// ══════════════════════════════════════════════════
+//  SCOUT REPORT UPLOAD SYSTEM
+// ══════════════════════════════════════════════════
+let scoutReportParsedRows = [];
+
+function openScoutReport() {
+  document.getElementById('sr-date').value = new Date().toISOString().slice(0,10);
+  document.getElementById('sr-opponent').value = '';
+  showScoutStep(1);
+  openOv('ov-scout-report');
+}
+
+function showScoutStep(n) {
+  [1,2,3].forEach(i => {
+    document.getElementById(`sr-step-${i}`).style.display = i===n ? '' : 'none';
+  });
+  document.getElementById('sr-modal-title').textContent =
+    n===1 ? 'Upload Scout Report' : n===2 ? 'Reading Report…' : 'Confirm & Save';
+}
+
+function startScoutReportUpload() {
+  const opponent = document.getElementById('sr-opponent').value;
+  const date     = document.getElementById('sr-date').value;
+  if (!opponent) { toast('Select opponent first'); return; }
+  if (!date)     { toast('Enter game date'); return; }
+  document.getElementById('sr-photo-in').click();
+}
+
+function handleScoutReportUpload(input) {
+  const f = input.files[0];
+  if (!f) return;
+  showScoutStep(2);
+  // Resize to max 2000px on longest side at 0.92 quality — keeps detail, cuts payload
+  const img = new Image();
+  const url = URL.createObjectURL(f);
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const MAX = 2000;
+    let w = img.width, h = img.height;
+    if (w > MAX || h > MAX) {
+      const ratio = Math.min(MAX / w, MAX / h);
+      w = Math.round(w * ratio); h = Math.round(h * ratio);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    const base64 = canvas.toDataURL('image/jpeg', 0.92);
+    parseScoutReport(base64);
+  };
+  img.src = url;
+  input.value = '';
+}
+
+async function parseScoutReport(base64) {
+  const opponent = document.getElementById('sr-opponent').value;
+  const date     = document.getElementById('sr-date').value;
+  try {
+    const resp = await fetch(`${RAIL}/api/parse-scouting-report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64, opponent }),
+      signal: AbortSignal.timeout(50000),
+    });
+    const { rows = [], rosterMap = {} } = await resp.json();
+    if (!rows.length) {
+      toast('No batters found — make sure the sheet is flat, well-lit, and the whole page is in frame');
+      showScoutStep(1);
+      return;
+    }
+    scoutReportParsedRows = rows;
+    renderScoutConfirm(rows, opponent, date, rosterMap);
+    showScoutStep(3);
+  } catch (e) {
+    toast('Upload timed out — check connection and try again');
+    showScoutStep(1);
+  }
+}
+
+function renderScoutConfirm(rows, opponent, date, rosterMap) {
+  document.getElementById('sr-confirm-header').textContent =
+    `${rows.length} batters found — ${opponent} · ${date}`;
+
+  // Build reverse roster lookup: number → name (from what the server returned)
+  const html = rows.map((row, i) => {
+    const unmatched = !row.matched_player;
+    const successIcon = row.success === true ? '✓' : row.success === false ? '✗' : '—';
+    const successColor = row.success === true ? 'var(--green)' : row.success === false ? 'var(--red)' : 'var(--g4)';
+    return `<div style="border:1px solid ${unmatched?'var(--red)':'var(--g2)'};border-radius:8px;padding:10px;margin-bottom:8px;background:${unmatched?'rgba(255,60,60,.06)':'var(--card)'}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:18px;font-weight:800;color:var(--p);min-width:28px">#${esc(row.number)}</span>
+        <span style="font-weight:700;color:${unmatched?'var(--red)':'var(--fg)'}">${esc(row.matched_player||'Unknown')}</span>
+        <span style="font-size:11px;background:var(--g1);border-radius:4px;padding:2px 6px">${esc(row.handedness||'?')}</span>
+        <span style="font-size:16px;font-weight:700;color:${successColor};margin-left:auto">${successIcon}</span>
+      </div>
+      ${unmatched ? `<input class="fi" style="margin-bottom:6px;font-size:12px" placeholder="Enter player name manually"
+        oninput="scoutReportParsedRows[${i}].matched_player=this.value" value="">` : ''}
+      ${row.plan_of_attack ? `<div style="font-size:11px;color:var(--g4);margin-bottom:3px"><b>Plan:</b> ${esc(row.plan_of_attack)}</div>` : ''}
+      ${row.shade_notes    ? `<div style="font-size:11px;color:var(--g4);margin-bottom:3px"><b>Spray:</b> ${esc(row.shade_notes)}</div>` : ''}
+      ${row.results        ? `<div style="font-size:11px;color:var(--g4)"><b>Result:</b> ${esc(row.results)}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  document.getElementById('sr-confirm-rows').innerHTML = html;
+}
+
+function scoutReportBack() { showScoutStep(1); }
+
+async function saveScoutReport() {
+  const opponent = document.getElementById('sr-opponent').value;
+  const date     = document.getElementById('sr-date').value;
+  const btn      = document.querySelector('#sr-step-3 .btn-p');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const resp = await fetch(`${RAIL}/api/game-scouting`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ opponent, game_date: date, rows: scoutReportParsedRows }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error);
+    closeOv('ov-scout-report');
+    toast(`Report saved — ${data.saved} batters stored ✓`);
+    loadScoutReports();
+  } catch (e) {
+    toast('Save failed — try again');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Report to Railway'; }
+  }
+}
+
+// ─── Load + render saved scout reports in Reports tab ────────────────────────
+async function loadScoutReports() {
+  const el = document.getElementById('scout-reports-list');
+  if (!el) return;
+  try {
+    const r = await fetch(`${RAIL}/api/game-scouting`, { signal: AbortSignal.timeout(8000) });
+    const reports = await r.json();
+    if (!reports.length) {
+      el.innerHTML = '<div class="mu s12" style="padding:8px 0">No reports yet — tap Upload Report after a game</div>';
+      return;
+    }
+    // Group by opponent + date
+    const groups = {};
+    reports.forEach(r => {
+      const key = `${r.date}||${r.opponent}`;
+      if (!groups[key]) groups[key] = { date: r.date, opponent: r.opponent, rows: [] };
+      groups[key].rows.push(r);
+    });
+    el.innerHTML = Object.values(groups).sort((a,b)=>b.date>a.date?1:-1).map(g => {
+      const total   = g.rows.length;
+      const wins    = g.rows.filter(r => r.success === true).length;
+      const losses  = g.rows.filter(r => r.success === false).length;
+      const pct     = total ? Math.round(wins/total*100) : 0;
+      return `<div style="background:var(--card);border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer"
+                   onclick="viewScoutReport('${esc(g.opponent)}','${esc(g.date)}')">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-weight:700;font-size:14px">${esc(g.opponent)}</div>
+            <div class="mu s12">${fmtDate(g.date)} · ${total} batters</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:18px;font-weight:800;color:${pct>=60?'var(--green)':pct>=40?'var(--yellow)':'var(--red)'}">${pct}%</div>
+            <div class="mu s12">${wins}✓ ${losses}✗</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch {}
+}
+
+async function viewScoutReport(opponent, date) {
+  try {
+    const r = await fetch(`${RAIL}/api/game-scouting?opponent=${encodeURIComponent(opponent)}`, { signal: AbortSignal.timeout(8000) });
+    const all = await r.json();
+    const rows = all.filter(x => x.date === date);
+    if (!rows.length) return;
+
+    const html = rows.map(r => {
+      const si = r.success===true ? '✓' : r.success===false ? '✗' : '—';
+      const sc = r.success===true ? 'var(--green)' : r.success===false ? 'var(--red)' : 'var(--g4)';
+      return `<div style="border-bottom:1px solid var(--g1);padding:10px 0">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-weight:800;color:var(--p)">#${esc(r.number)}</span>
+          <span style="font-weight:700">${esc(r.player||'Unknown')}</span>
+          <span style="font-size:11px;background:var(--g1);border-radius:4px;padding:1px 5px">${esc(r.handedness||'?')}</span>
+          <span style="font-size:18px;font-weight:700;color:${sc};margin-left:auto">${si}</span>
+        </div>
+        ${r.plan?`<div style="font-size:11px;color:var(--g4)"><b>Plan:</b> ${esc(r.plan)}</div>`:''}
+        ${r.results?`<div style="font-size:11px;color:var(--g4)"><b>Result:</b> ${esc(r.results)}</div>`:''}
+      </div>`;
+    }).join('');
+
+    // Show in an alert-style modal (reuse existing ov-report-view if available, else alert)
+    const failures = rows.filter(x=>x.success===false).map(x=>x.player).filter(Boolean);
+    const deweyNote = failures.length
+      ? `<div style="background:rgba(255,160,0,.12);border:1px solid var(--yellow);border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px">
+           <b>⚠ Dewey flag:</b> Approach did NOT work on: ${failures.map(n=>`<b>${n}</b>`).join(', ')}. Reassess before next matchup.
+         </div>` : '';
+
+    document.getElementById('rv-name').textContent = opponent;
+    document.getElementById('rv-body').innerHTML = `
+      <div class="mu s12" style="margin-bottom:10px">${fmtDate(date)}</div>
+      ${deweyNote}${html}`;
+    openOv('ov-report');
+  } catch { toast('Could not load report'); }
 }
 
 // ══════════════════════════════════════════════════
@@ -1773,11 +2533,12 @@ function switchTab(name, btn) {
   btn.classList.add('on');
   document.getElementById('back-btn').classList.remove('show');
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
+  const ts = allStats ? ' · ' + timeAgo(allStats.updatedAt) : '';
   if (name==='teams')  { document.getElementById('v-teams').classList.add('on');   setHdr('Dawg<span>Data</span>', allStats?'Updated '+timeAgo(allStats.updatedAt):'Loading…'); renderTeamList(); }
-  if (name==='leaders'){ document.getElementById('v-leaders').classList.add('on'); setHdr('League Leaders','PGCBL West · tap player to scout'); renderLeaders(); }
-  if (name==='matrix') { document.getElementById('v-matrix').classList.add('on');  setHdr('Run Matrix','All Batavia pitchers · auto-updating'); renderMatrixView(); }
-  if (name==='pitches'){ document.getElementById('v-pitches').classList.add('on'); setHdr('Pitch Availability','Batavia Muckdogs'); renderPitchAvailability(); }
-  if (name==='reports'){ document.getElementById('v-reports').classList.add('on'); setHdr('Reports','Game sheets · player notes'); renderGameSheets(); renderReports(); }
+  if (name==='leaders'){ document.getElementById('v-leaders').classList.add('on'); setHdr('League Leaders','PGCBL West'+ts); renderLeaders(); }
+  if (name==='matrix') { document.getElementById('v-matrix').classList.add('on');  setHdr('Run Matrix','Batavia pitchers'+ts); renderMatrixView(); }
+  if (name==='pitches'){ document.getElementById('v-pitches').classList.add('on'); setHdr('Pitch Availability','Batavia Muckdogs'+ts); renderPitchAvailability(); }
+  if (name==='reports'){ document.getElementById('v-reports').classList.add('on'); setHdr('Reports','Game sheets · player notes'+ts); renderGameSheets(); renderReports(); loadScoutReports(); loadTendencyReportsList(); }
 }
 function openOv(id)  { document.getElementById(id).classList.add('open'); }
 function closeOv(id) { document.getElementById(id).classList.remove('open'); }
@@ -1805,7 +2566,7 @@ function fmtTs(iso){
 
 // ── PWA ──
 if('serviceWorker' in navigator){
-  const sw=`const C='dd-v10';
+  const sw=`const C='dd-v16';
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll([self.location.href])));self.skipWaiting();});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim();});
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(fetch(e.request).then(r=>{const cl=r.clone();caches.open(C).then(c=>c.put(e.request,cl));return r;}).catch(()=>caches.match(e.request)));});`;
