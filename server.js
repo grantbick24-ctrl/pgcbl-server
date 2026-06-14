@@ -351,54 +351,63 @@ function delay(min = 3000, max = 7000) {
 }
 
 // Get page HTML: try Puppeteer first, fall back to fetch
+// Hard 60s outer timeout so a Chrome crash can never hang this forever
 async function getPageHTML(url, br, extraWaitMs = 0) {
   if (br) {
-    let page = null;
-    try {
-      page = await br.newPage();
-      await page.setUserAgent(UA);
-      await page.setViewport({ width: 1280, height: 800 });
-      await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+    const puppeteerResult = await Promise.race([
+      (async () => {
+        let page = null;
+        try {
+          page = await br.newPage();
+          await page.setUserAgent(UA);
+          await page.setViewport({ width: 1280, height: 800 });
+          await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
 
-      // Block images, fonts, stylesheets, media — we only need HTML + JS for table data
-      await page.setRequestInterception(true);
-      page.on('request', req => {
-        const type = req.resourceType();
-        if (['image','stylesheet','font','media','other'].includes(type)) {
-          req.abort();
-        } else {
-          req.continue();
-        }
-      });
+          // Block images, fonts, stylesheets, media — we only need HTML + JS for table data
+          await page.setRequestInterception(true);
+          page.on('request', req => {
+            const type = req.resourceType();
+            if (['image','stylesheet','font','media','other'].includes(type)) {
+              req.abort();
+            } else {
+              req.continue();
+            }
+          });
 
-      await delay(1500, 3000);
-      try {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      } catch {
-        await page.goto(url, { waitUntil: 'load', timeout: 30000 });
-      }
-      // Wait for Presto Sports JS to render table data
-      try {
-        await page.waitForSelector('table tbody tr', { timeout: 8000 });
-      } catch {}
-      // Extra wait for any async data rendering
-      await delay(1000, 2000);
-      // Optional additional wait for slow-rendering pages
-      if (extraWaitMs > 0) await new Promise(r => setTimeout(r, extraWaitMs));
-      // Accept cookie banners
-      try {
-        for (const sel of ['#onetrust-accept-btn-handler','.accept-cookies','button[aria-label*="Accept"]']) {
-          const btn = await page.$(sel);
-          if (btn) { await btn.click(); await delay(500, 1000); break; }
+          await delay(1500, 3000);
+          try {
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          } catch {
+            await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+          }
+          // Wait for Presto Sports JS to render table data
+          try {
+            await page.waitForSelector('table tbody tr', { timeout: 8000 });
+          } catch {}
+          // Extra wait for any async data rendering
+          await delay(1000, 2000);
+          // Optional additional wait for slow-rendering pages
+          if (extraWaitMs > 0) await new Promise(r => setTimeout(r, extraWaitMs));
+          // Accept cookie banners
+          try {
+            for (const sel of ['#onetrust-accept-btn-handler','.accept-cookies','button[aria-label*="Accept"]']) {
+              const btn = await page.$(sel);
+              if (btn) { await btn.click(); await delay(500, 1000); break; }
+            }
+          } catch {}
+          const html = await page.content();
+          await page.close();
+          return html;
+        } catch (e) {
+          if (page) try { await page.close(); } catch {}
+          logScrape(`  Puppeteer failed for ${url}: ${e.message} — trying fetch`);
+          return null;
         }
-      } catch {}
-      const html = await page.content();
-      await page.close();
-      return html;
-    } catch (e) {
-      if (page) try { await page.close(); } catch {}
-      logScrape(`  Puppeteer failed for ${url}: ${e.message} — trying fetch`);
-    }
+      })(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Puppeteer 60s hard timeout')), 60000)),
+    ]).catch(e => { logScrape(`  Puppeteer hard timeout for ${url} — trying fetch`); return null; });
+
+    if (puppeteerResult) return puppeteerResult;
   }
   // fetch fallback
   await delay(2000, 4000);
@@ -984,6 +993,9 @@ async function scrapeGameStats(season, br) {
 
   const cI = (cols, ...names) => cols.findIndex(h => names.some(n => h === n));
 
+  // Reuse a single browser session across all games — relaunching Chrome per-game
+  // takes 15+ minutes for a full season and Railway kills long-running scrapes
+  let gameBr = await getBrowser();
   let saved = 0;
   for (const gameId of toScrape) {
     const ds = gameId.slice(0, 8);
@@ -991,12 +1003,15 @@ async function scrapeGameStats(season, br) {
     const htmlUrl = `https://pgcbl.com/sports/bsb/${season}/boxscores/${gameId}.xml`;
     logScrape(`  Scraping ${gameId} (${date})...`);
     try {
-      await closeBrowser();
-      const freshBr = await getBrowser();
-      const html = await getPageHTML(htmlUrl, freshBr);
+      // On crash, relaunch browser once and retry
+      let html = await getPageHTML(htmlUrl, gameBr).catch(async () => {
+        logScrape(`    Browser crashed — relaunching...`);
+        await closeBrowser(); gameBr = await getBrowser();
+        return getPageHTML(htmlUrl, gameBr).catch(() => '');
+      });
       if (!html || html.length < 5000) {
         logScrape(`    Tiny/empty (${html?.length||0} chars) — skipping`);
-        await closeBrowser(); continue;
+        continue;
       }
 
       const tables = parseHTMLTables(html);
@@ -1118,6 +1133,7 @@ async function scrapeGameStats(season, br) {
 
       logScrape(`    ✓ ${gameId}: home=${homeTeam||'?'} (${homeBatting.length}bat,${homePitching.length}pit) away=${awayTeam||'?'} (${awayBatting.length}bat,${awayPitching.length}pit)`);
       saved++;
+      await delay(1500, 3000); // brief pause between games to avoid rate-limiting
     } catch (e) {
       logScrape(`    Error ${gameId}: ${e.message}`);
     }
