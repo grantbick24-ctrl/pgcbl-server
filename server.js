@@ -101,6 +101,21 @@ async function initDB() {
         home_team TEXT DEFAULT '', away_team TEXT DEFAULT '',
         home_score INTEGER DEFAULT 0, away_score INTEGER DEFAULT 0,
         game_date DATE, status TEXT DEFAULT 'F',
+        innings JSONB DEFAULT '[]',
+        pitcher_lines JSONB DEFAULT '[]',
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (season, game_id)
+      );
+      CREATE TABLE IF NOT EXISTS schedule (
+        season TEXT, game_id TEXT NOT NULL,
+        game_date DATE, game_time TEXT DEFAULT '',
+        home_team TEXT DEFAULT '', away_team TEXT DEFAULT '',
+        location TEXT DEFAULT '',
+        batavia_score INTEGER, opp_score INTEGER,
+        result TEXT DEFAULT '',
+        is_home BOOLEAN DEFAULT TRUE,
+        status TEXT DEFAULT 'scheduled',
+        box_score_url TEXT DEFAULT '',
         updated_at TIMESTAMPTZ DEFAULT NOW(),
         PRIMARY KEY (season, game_id)
       );
@@ -164,6 +179,8 @@ async function initDB() {
       ALTER TABLE pitch_availability ADD COLUMN IF NOT EXISTS is_manual BOOLEAN DEFAULT FALSE;
       ALTER TABLE pitch_availability ADD COLUMN IF NOT EXISTS outing_type TEXT DEFAULT 'Game';
       ALTER TABLE pitch_availability ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
+      ALTER TABLE box_scores ADD COLUMN IF NOT EXISTS innings JSONB DEFAULT '[]';
+      ALTER TABLE box_scores ADD COLUMN IF NOT EXISTS pitcher_lines JSONB DEFAULT '[]';
     `).catch(e => console.warn('Migration warning:', e.message));
     console.log('PostgreSQL ready — all tables created');
     return true;
@@ -495,6 +512,7 @@ async function scrapeRosters(season, br) {
     }
   }
   for (const team of teams) {
+    try {
     // Scrape lineup (hitters), roster (full team incl. pitchers), and hitter-specific lineup
     // Also try pgcbl.prestosports.com with extra 5s wait for teams that may render slower
     const urlSets = [
@@ -505,7 +523,7 @@ async function scrapeRosters(season, br) {
     ];
     const allTables = [];
     for (const { url, wait } of urlSets) {
-      const html = await getPageHTML(url, br, wait);
+      const html = await getPageHTML(url, br, wait).catch(e => { logScrape(`  ${team.name} fetch failed (${url.split('?')[1]}): ${e.message}`); return ''; });
       allTables.push(...parseHTMLTables(html));
     }
     const tables = allTables;
@@ -567,6 +585,9 @@ async function scrapeRosters(season, br) {
       }
     }
     logScrape(`  ${team.name}: ${saved} players${newPlayers.length===0?' (no roster on PGCBL yet — keeping existing data)':''}`);
+    } catch (e) {
+      logScrape(`  ${team.name}: roster scrape failed (skipping) — ${e.message}`);
+    }
   }
 }
 
@@ -923,16 +944,23 @@ async function runFullScrape() {
 
   try {
     br = await getBrowser(); // may be null if Puppeteer unavailable
-    // All scrapes sequential, one page at a time
+
+    // ── Critical stats — if these fail, the whole scrape fails ──────────────
     await scrapeStandings(season, br);
     await scrapeHitters(season, br);
     await scrapePitchers(season, br);
-    await scrapeRosters(season, br);
-    await scrapePitchCounts(season, br);
-    await scrapeBoxScores(season, br);
 
+    // Critical data is in DB — mark lastScrape NOW so Dewey/dawgdata see fresh data
+    // even if the secondary scrapes below are slow or partially fail
     await setMetaValue('last_scrape', new Date().toISOString());
     await setMetaValue('last_scrape_error', '');
+    logScrape('─── Critical stats saved — lastScrape updated ───');
+
+    // ── Secondary scrapes — failures are logged but don't abort the run ─────
+    await scrapeRosters(season, br).catch(e => logScrape('Roster scrape error (non-fatal): ' + e.message));
+    await scrapePitchCounts(season, br).catch(e => logScrape('Pitch count scrape error (non-fatal): ' + e.message));
+    await scrapeBoxScores(season, br).catch(e => logScrape('Box score scrape error (non-fatal): ' + e.message));
+
     logScrape('═══ Scrape complete ═══');
   } catch (e) {
     logScrape('═══ Scrape failed: ' + e.message + ' ═══');
