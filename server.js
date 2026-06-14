@@ -106,6 +106,29 @@ async function initDB() {
         updated_at TIMESTAMPTZ DEFAULT NOW(),
         PRIMARY KEY (season, game_id)
       );
+      CREATE TABLE IF NOT EXISTS game_stats (
+        id SERIAL PRIMARY KEY,
+        season TEXT NOT NULL,
+        game_id TEXT NOT NULL,
+        game_date DATE,
+        opponent TEXT DEFAULT '',
+        is_home BOOLEAN DEFAULT TRUE,
+        batavia_score INTEGER,
+        opp_score INTEGER,
+        result TEXT DEFAULT '',
+        innings JSONB DEFAULT '[]',
+        batavia_batting JSONB DEFAULT '[]',
+        batavia_pitching JSONB DEFAULT '[]',
+        opp_batting JSONB DEFAULT '[]',
+        opp_pitching JSONB DEFAULT '[]',
+        wp TEXT DEFAULT '',
+        lp TEXT DEFAULT '',
+        box_score_url TEXT DEFAULT '',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (season, game_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_gs_date ON game_stats(season, game_date);
       CREATE TABLE IF NOT EXISTS schedule (
         season TEXT, game_id TEXT NOT NULL,
         game_date DATE, game_time TEXT DEFAULT '',
@@ -181,7 +204,20 @@ async function initDB() {
       ALTER TABLE pitch_availability ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
       ALTER TABLE box_scores ADD COLUMN IF NOT EXISTS innings JSONB DEFAULT '[]';
       ALTER TABLE box_scores ADD COLUMN IF NOT EXISTS pitcher_lines JSONB DEFAULT '[]';
+      ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS home_team TEXT DEFAULT '';
+      ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS away_team TEXT DEFAULT '';
+      ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS home_score INTEGER;
+      ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS away_score INTEGER;
+      ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS home_batting JSONB DEFAULT '[]';
+      ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS away_batting JSONB DEFAULT '[]';
+      ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS home_pitching JSONB DEFAULT '[]';
+      ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS away_pitching JSONB DEFAULT '[]';
     `).catch(e => console.warn('Migration warning:', e.message));
+    // Index for querying by team and date across all West Division games
+    await pg.query(`
+      CREATE INDEX IF NOT EXISTS idx_gs_home_team ON game_stats(season, home_team, game_date);
+      CREATE INDEX IF NOT EXISTS idx_gs_away_team ON game_stats(season, away_team, game_date);
+    `).catch(() => {});
     console.log('PostgreSQL ready — all tables created');
     return true;
   } catch (e) {
@@ -700,41 +736,396 @@ async function scrapePitchCounts(season, br) {
   logScrape(`  ✓ ${saved} Batavia pitch records`);
 }
 
-// ─── 6. Recent box scores (scores only, West games) ───────────────────────────
+// ─── 6. Schedule scraper ─────────────────────────────────────────────────────
+async function scrapeSchedule(season, br) {
+  logScrape('Scraping Batavia schedule...');
+  const urls = [
+    `https://pgcbl.com/sports/bsb/${season}/teams/bataviamuckdogs?view=sched`,
+    `https://pgcbl.prestosports.com/sports/bsb/${season}/teams/bataviamuckdogs?view=sched`,
+    `https://pgcbl.prestosports.com/sports/bsb/${season}/schedule`,
+  ];
+  let schedHTML = '';
+  for (const url of urls) {
+    try { schedHTML = await getPageHTML(url, br); if (schedHTML.length > 2000) break; } catch {}
+  }
+
+  // Extract all box score links from the page (used to match to game rows)
+  const bsLinks = [];
+  for (const m of (schedHTML||'').matchAll(/href="([^"]*\/boxscores\/[^"?#.]+)"/gi)) {
+    const p = m[1];
+    bsLinks.push(p.startsWith('http') ? p : `https://pgcbl.com${p}`);
+  }
+
+  const tables = parseHTMLTables(schedHTML);
+  const games = [];
+
+  for (const { headers, rows } of tables) {
+    const hL = headers.map(h => h.toLowerCase());
+    if (!hL.some(h => /date/i.test(h))) continue;
+    const dIdx = hL.findIndex(h => /date/i.test(h));
+    const tIdx = hL.findIndex(h => /time/i.test(h));
+    const oIdx = hL.findIndex(h => /opp/i.test(h));
+    const rIdx = hL.findIndex(h => /result|score|w\/l/i.test(h));
+    const lIdx = hL.findIndex(h => /loc|site/i.test(h));
+    if (dIdx < 0) continue;
+
+    rows.forEach((row, i) => {
+      const rawDate = row[dIdx] || '';
+      const rawOpp  = oIdx >= 0 ? (row[oIdx]||'') : '';
+      const rawRes  = rIdx >= 0 ? (row[rIdx]||'') : '';
+      const dm = rawDate.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+      if (!dm) return;
+      const yr = dm[3].length===2?'20'+dm[3]:dm[3];
+      const gameDate = `${yr}-${dm[1].padStart(2,'0')}-${dm[2].padStart(2,'0')}`;
+      const opp = rawOpp.replace(/[@*#]/g,'').trim();
+      const isHome = !rawOpp.startsWith('@') && !/\bat\s/i.test(rawOpp);
+      const location = lIdx>=0 ? (row[lIdx]||'') : (isHome ? 'Dwyer Stadium, Batavia NY' : '');
+      const gameTime = tIdx>=0 ? (row[tIdx]||'') : '';
+      let result='', bataviaScore=null, oppScore=null, status='scheduled';
+      const rm = rawRes.match(/([WL])\D*(\d+)\D*-\D*(\d+)/i);
+      if (rm) { result=rm[1].toUpperCase(); bataviaScore=Number(rm[2]); oppScore=Number(rm[3]); status='final'; }
+      else { const sm=rawRes.match(/(\d+)-(\d+)/); if(sm){bataviaScore=Number(sm[1]);oppScore=Number(sm[2]);status='final';} }
+      const gameId = `bat_${gameDate.replace(/-/g,'')}`;
+      games.push({ gameId, gameDate, gameTime, isHome,
+        homeTeam: isHome?'Batavia Muckdogs':opp, awayTeam: isHome?opp:'Batavia Muckdogs',
+        location, bataviaScore, oppScore, result, status,
+        boxScoreUrl: bsLinks[i] || '' });
+    });
+    if (games.length) break;
+  }
+
+  // Fallback: gamelog page for completed games
+  if (!games.length || !games.some(g=>g.status==='final')) {
+    logScrape('  Trying gamelog for results...');
+    const logHTML = await getPageHTML(
+      `https://pgcbl.com/sports/bsb/${season}/teams/bataviamuckdogs?view=gamelog`, br
+    );
+    const logLinks = [];
+    for (const m of logHTML.matchAll(/href="([^"]*\/boxscores\/[^"?#.]+)"/gi))
+      logLinks.push(m[1].startsWith('http')?m[1]:`https://pgcbl.com${m[1]}`);
+
+    for (const { headers, rows } of parseHTMLTables(logHTML)) {
+      const hL = headers.map(h=>h.toLowerCase());
+      if (!hL.some(h=>/date/i.test(h))) continue;
+      const dI=hL.findIndex(h=>/date/i.test(h)), oI=hL.findIndex(h=>/opp/i.test(h)), rI=hL.findIndex(h=>/result/i.test(h));
+      rows.forEach((row,i) => {
+        const dm=(row[dI]||'').match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+        if(!dm) return;
+        const yr=dm[3].length===2?'20'+dm[3]:dm[3];
+        const gameDate=`${yr}-${dm[1].padStart(2,'0')}-${dm[2].padStart(2,'0')}`;
+        const opp=oI>=0?(row[oI]||'').replace(/[@*#]/g,'').trim():'';
+        let result='',bataviaScore=null,oppScore=null;
+        if(rI>=0){const rm=(row[rI]||'').match(/([WL])\D*(\d+)\D*-\D*(\d+)/i);if(rm){result=rm[1].toUpperCase();bataviaScore=Number(rm[2]);oppScore=Number(rm[3]);}}
+        const gameId=`bat_${gameDate.replace(/-/g,'')}`;
+        const ex=games.find(g=>g.gameId===gameId);
+        if(ex){if(result){ex.result=result;ex.bataviaScore=bataviaScore;ex.oppScore=oppScore;ex.status='final';}if(!ex.boxScoreUrl&&logLinks[i])ex.boxScoreUrl=logLinks[i];}
+        else games.push({gameId,gameDate,gameTime:'',isHome:true,homeTeam:'Batavia Muckdogs',awayTeam:opp,location:'',bataviaScore,oppScore,result,status:result?'final':'scheduled',boxScoreUrl:logLinks[i]||''});
+      });
+      if(games.length) break;
+    }
+  }
+
+  if (!pg) return games;
+  let saved=0;
+  for (const g of games) {
+    await pg.query(
+      `INSERT INTO schedule(season,game_id,game_date,game_time,home_team,away_team,location,batavia_score,opp_score,result,is_home,status,box_score_url,updated_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
+       ON CONFLICT(season,game_id) DO UPDATE SET
+         game_date=$3,game_time=$4,home_team=$5,away_team=$6,location=$7,
+         batavia_score=$8,opp_score=$9,result=$10,is_home=$11,status=$12,
+         box_score_url=COALESCE(NULLIF($13,''),schedule.box_score_url),updated_at=NOW()`,
+      [season,g.gameId,g.gameDate,g.gameTime,g.homeTeam,g.awayTeam,g.location,
+       g.bataviaScore,g.oppScore,g.result,g.isHome,g.status,g.boxScoreUrl]
+    ).catch(()=>{});
+    saved++;
+  }
+  logScrape(`  ✓ ${saved} schedule games (${games.filter(g=>g.status==='final').length} final, ${games.filter(g=>g.status==='scheduled').length} upcoming)`);
+  return games;
+}
+
+// ─── 7. Full box scores with pitcher lines ────────────────────────────────────
 async function scrapeBoxScores(season, br) {
-  logScrape('Scraping recent box scores...');
+  logScrape('Scraping Batavia box scores (pitcher lines)...');
+  if (!pg) return;
+
   const logHTML = await getPageHTML(
     `https://pgcbl.com/sports/bsb/${season}/teams/bataviamuckdogs?view=gamelog`, br
   );
-  const tables = parseHTMLTables(logHTML);
-  let saved = 0;
-  for (const { headers, rows } of tables) {
-    if (!headers.some(h => /date|opp|result/i.test(h))) continue;
-    for (const r of rows) {
-      const dateStr = r[0]?.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/)?.[0];
-      if (!dateStr) continue;
-      const [mo, dy, yr] = dateStr.split('/');
-      const gameDate = `${yr.length===2?'20'+yr:yr}-${mo.padStart(2,'0')}-${dy.padStart(2,'0')}`;
-      const opp   = r.find(c => /[A-Z][a-z]+/.test(c) && c !== r[0]) || '';
-      // Result format is "W, 9-6" or "L, 7-10" — extract just the score
-      const scoreCell = r.find(c => /\d+-\d+/.test(c)) || '';
-      const scoreMatch = scoreCell.match(/(\d+)-(\d+)/);
-      const [s1, s2] = scoreMatch ? [Number(scoreMatch[1]), Number(scoreMatch[2])] : [0, 0];
-      const gameId = `batavia_${gameDate.replace(/-/g,'')}`;
-      if (!pg) continue;
-      await pg.query(
-        `INSERT INTO box_scores(season,game_id,away_team,home_team,away_score,home_score,game_date,status)
-         VALUES($1,$2,'Batavia Muckdogs',$3,$4,$5,$6,'F')
-         ON CONFLICT(season,game_id) DO UPDATE SET
-           home_team=$3,away_score=$4,home_score=$5,game_date=$6,updated_at=NOW()`,
-        [season, gameId, opp, s1||0, s2||0, gameDate]
-      ).catch(() => {});
-      saved++;
-    }
-    if (saved) break;
+  const linkSet = new Set();
+  for (const m of logHTML.matchAll(/href="([^"]*\/boxscores\/[^"?#]+)"/gi)) {
+    const p = m[1];
+    if (p.includes('.xml')||p.includes('.json')) continue;
+    linkSet.add(p.startsWith('http')?p:`https://pgcbl.com${p.startsWith('/')?p:'/'+p}`);
   }
-  logScrape(`  ✓ ${saved} box score records`);
+  if (!linkSet.size) {
+    for (const m of logHTML.matchAll(/\/boxscores\/(\d{8}[^"'\s<>.]+)/gi))
+      linkSet.add(`https://pgcbl.com/sports/bsb/${season}/boxscores/${m[1]}`);
+  }
+  if (!linkSet.size) {
+    for (const m of logHTML.matchAll(/boxscores\/([^"'\s<>]+\.xml)/g))
+      linkSet.add(`https://pgcbl.com/sports/bsb/${season}/boxscores/${m[1].replace(/\.xml$/,'')}`);
+  }
+
+  const links = [...linkSet].slice(0, 30);
+  logScrape(`  Found ${links.length} box score links`);
+  let saved = 0;
+
+  for (const url of links) {
+    const dateM = url.match(/(\d{8})/);
+    const date  = dateM ? `${dateM[1].slice(0,4)}-${dateM[1].slice(4,6)}-${dateM[1].slice(6,8)}` : null;
+    const gameId = dateM ? `bat_${dateM[1]}` : `bat_${url.split('/').pop()}`;
+
+    const html = await getPageHTML(url, br);
+    const tables = parseHTMLTables(html);
+
+    let bataviaScore=null, oppScore=null, oppTeam='';
+    const innings=[]; const pitcherLines=[];
+
+    // Linescore (inning-by-inning)
+    for (const { headers, rows } of tables) {
+      const colRow = headers.length?headers:(rows[0]||[]);
+      const hasInnings = colRow.some(h=>/^[1-9]$/.test(String(h).trim()));
+      if (!hasInnings) continue;
+      const dataRows = headers.length?rows:rows.slice(1);
+      for (const row of dataRows) {
+        const teamName=(row[0]||'').trim();
+        if(!teamName||/^team$/i.test(teamName)) continue;
+        const rIdx=colRow.findIndex(h=>/^r$/i.test(String(h).trim()));
+        const totalR=rIdx>=0?pi(row[rIdx]):null;
+        if(/batavia/i.test(teamName)) bataviaScore=totalR;
+        else { oppTeam=oppTeam||teamName; oppScore=totalR; }
+        innings.push({team:teamName, runs:row.slice(1,rIdx>=0?rIdx:undefined).map(pi)});
+      }
+      break;
+    }
+
+    // Pitcher lines
+    let curTeam='';
+    for (const { raw, rows, headers } of tables) {
+      const colRow=(headers.length?headers:(rows[0]||[])).map(h=>(h||'').toLowerCase().trim());
+      if (!colRow.some(h=>h==='ip')) continue;
+      const ctx=stripTags(raw.slice(0,600));
+      if(/batavia/i.test(ctx)) curTeam='Batavia Muckdogs';
+      else if(oppTeam) curTeam=oppTeam;
+      const ipI=colRow.findIndex(h=>h==='ip'), hI=colRow.findIndex(h=>h==='h');
+      const rI=colRow.findIndex(h=>h==='r'), erI=colRow.findIndex(h=>h==='er');
+      const bbI=colRow.findIndex(h=>h==='bb'), kI=colRow.findIndex(h=>h==='so'||h==='k');
+      const npI=colRow.findIndex(h=>h==='np'), bfI=colRow.findIndex(h=>h==='bf');
+      if(ipI<0) continue;
+      const dataRows=headers.length?rows:rows.slice(1);
+      for (const row of dataRows) {
+        const rawName=(row[0]||'').trim();
+        if(!rawName||/^(pitchers?|totals?|name)$/i.test(rawName)) continue;
+        const name=cleanName(rawName);
+        if(!name||name.length<2) continue;
+        const ip=pf(row[ipI])||0;
+        if(!ip) continue;
+        pitcherLines.push({team:curTeam,name,ip,h:pi(row[hI])||0,r:pi(row[rI])||0,er:pi(row[erI])||0,bb:pi(row[bbI])||0,k:pi(row[kI])||0,np:pi(row[npI])||0,bf:pi(row[bfI])||0});
+      }
+    }
+
+    await pg.query(
+      `INSERT INTO box_scores(season,game_id,home_team,away_team,home_score,away_score,game_date,status,innings,pitcher_lines,updated_at)
+       VALUES($1,$2,'Batavia Muckdogs',$3,$4,$5,$6,'F',$7,$8,NOW())
+       ON CONFLICT(season,game_id) DO UPDATE SET
+         away_team=COALESCE(NULLIF($3,''),box_scores.away_team),
+         home_score=COALESCE($4,box_scores.home_score),away_score=COALESCE($5,box_scores.away_score),
+         game_date=COALESCE($6,box_scores.game_date),status='F',
+         innings=CASE WHEN $7::jsonb='[]'::jsonb THEN box_scores.innings ELSE $7 END,
+         pitcher_lines=CASE WHEN $8::jsonb='[]'::jsonb THEN box_scores.pitcher_lines ELSE $8 END,
+         updated_at=NOW()`,
+      [season,gameId,oppTeam||'Unknown',bataviaScore,oppScore,date||null,
+       JSON.stringify(innings),JSON.stringify(pitcherLines)]
+    ).catch(()=>{});
+    const batPitchers=pitcherLines.filter(p=>/batavia/i.test(p.team));
+    if(batPitchers.length) logScrape(`    ${gameId}: ${batPitchers.map(p=>`${p.name} ${p.np}p`).join(', ')}`);
+    saved++;
+  }
+  logScrape(`  ✓ ${saved} box scores`);
 }
+
+// ─── 8. Game stats from HTML box scores ──────────────────────────────────────
+// Scrapes ALL West Division games — every team's gamelog is checked every cron run.
+// URLs: pgcbl.com/sports/bsb/SEASON/boxscores/GAMEID.xml  (served as full HTML via Puppeteer)
+// Seed game IDs for Batavia — discovered dynamically from gamelogs every run too
+const KNOWN_BOX_SCORES = [
+  '20260529_6w3u','20260530_wfcc','20260531_6t25','20260603_umsj',
+  '20260605_l32y','20260607_ys97','20260611_qdhj','20260613_aod0',
+];
+
+async function scrapeGameStats(season, br) {
+  logScrape('Scraping West Division game stats — all teams...');
+  if (!pg) return;
+
+  // ── 1. Collect all unique box score game IDs from every team's gamelog ────
+  const allGameIds = new Set(KNOWN_BOX_SCORES);
+  for (const team of TEAMS) {
+    const html = await getPageHTML(
+      `https://pgcbl.com/sports/bsb/${season}/teams/${team.slug}?view=gamelog`, br
+    ).catch(() => '');
+    if (!html || html.length < 500) continue;
+    let found = 0;
+    for (const m of html.matchAll(/boxscores\/(\d{8}_\w+)(?:\.xml)?/gi))
+      if (!allGameIds.has(m[1])) { allGameIds.add(m[1]); found++; }
+    if (found) logScrape(`  ${team.name}: +${found} game IDs`);
+  }
+  logScrape(`  ${allGameIds.size} unique games across West Division`);
+
+  // ── 2. Which games still need scraping? ───────────────────────────────────
+  const { rows: existing } = await pg.query(
+    `SELECT game_id,
+       COALESCE(jsonb_array_length(home_batting), jsonb_array_length(batavia_batting), 0) as has_data
+     FROM game_stats WHERE season=$1`, [season]
+  ).catch(() => ({ rows: [] }));
+  const scrapedSet = new Set(existing.filter(r => Number(r.has_data||0) > 0).map(r => r.game_id));
+  const toScrape = [...allGameIds].filter(gid => !scrapedSet.has(gid));
+  logScrape(`  ${toScrape.length}/${allGameIds.size} games need scraping`);
+
+  const cI = (cols, ...names) => cols.findIndex(h => names.some(n => h === n));
+
+  let saved = 0;
+  for (const gameId of toScrape) {
+    const ds = gameId.slice(0, 8);
+    const date = `${ds.slice(0,4)}-${ds.slice(4,6)}-${ds.slice(6,8)}`;
+    const htmlUrl = `https://pgcbl.com/sports/bsb/${season}/boxscores/${gameId}.xml`;
+    logScrape(`  Scraping ${gameId} (${date})...`);
+    try {
+      await closeBrowser();
+      const freshBr = await getBrowser();
+      const html = await getPageHTML(htmlUrl, freshBr);
+      if (!html || html.length < 5000) {
+        logScrape(`    Tiny/empty (${html?.length||0} chars) — skipping`);
+        await closeBrowser(); continue;
+      }
+
+      const tables = parseHTMLTables(html);
+      let awayTeam = '', homeTeam = '', awayScore = null, homeScore = null;
+      const innings = [];
+
+      // ── Linescore — PrestoSports: visitor row first, home row second ──────
+      for (const { headers, rows } of tables) {
+        const colRow = headers.length ? headers : (rows[0]||[]);
+        if (!colRow.some(h => /^[1-9]$/.test(String(h).trim())) &&
+            !colRow.some(h => /^final$/i.test(String(h).trim()))) continue;
+        const data = headers.length ? rows : rows.slice(1);
+        let rowN = 0;
+        for (const row of data) {
+          const t = (row[0]||'').trim();
+          if (!t || /^(team|r|h|e|final)$/i.test(t)) continue;
+          const rI = colRow.findIndex(h => /^r$/i.test(String(h).trim()));
+          const score = rI >= 0 ? pi(row[rI]) : null;
+          innings.push({ team: t, score, runs: row.slice(1, rI>=0?rI:undefined).map(v=>pi(v)||0) });
+          if (rowN === 0) { awayTeam = awayTeam || t; awayScore = awayScore ?? score; }
+          else            { homeTeam = homeTeam || t; homeScore = homeScore ?? score; }
+          rowN++;
+        }
+        if (innings.length) break;
+      }
+
+      // ── Batting tables (visitor first, home second) ───────────────────────
+      const parseBat = (headers, rows) => {
+        const col=(headers.length?headers:(rows[0]||[])).map(h=>(h||'').toLowerCase().trim());
+        if (!col.some(h=>h==='ab')) return null;
+        const abI=col.indexOf('ab'),rI=cI(col,'r'),hI=cI(col,'h'),rbiI=col.indexOf('rbi'),
+              bbI=col.indexOf('bb'),soI=cI(col,'so','k'),hrI=col.indexOf('hr'),
+              sfI=col.indexOf('sf'),hbpI=col.indexOf('hbp');
+        const data=headers.length?rows:rows.slice(1),arr=[];
+        for (const row of data) {
+          const raw=(row[0]||'').trim();
+          if (!raw||/^(totals?|name|batters?|player|hitters?)$/i.test(raw)) continue;
+          const name=cleanName(raw); if(!name||name.length<2) continue;
+          arr.push({name,ab:pi(row[abI])||0,r:rI>=0?pi(row[rI])||0:0,h:hI>=0?pi(row[hI])||0:0,
+            rbi:rbiI>=0?pi(row[rbiI])||0:0,bb:bbI>=0?pi(row[bbI])||0:0,k:soI>=0?pi(row[soI])||0:0,
+            hr:hrI>=0?pi(row[hrI])||0:0,sf:sfI>=0?pi(row[sfI])||0:0,hbp:hbpI>=0?pi(row[hbpI])||0:0});
+        }
+        return arr.length?arr:null;
+      };
+      const batTbls=tables.map(({headers,rows})=>parseBat(headers,rows)).filter(Boolean);
+      const [awayBatting,homeBatting]=batTbls.length>=2?[batTbls[0],batTbls[1]]:batTbls.length===1?[batTbls[0],[]]:[[],[]];
+
+      // ── Pitching tables (visitor first, home second) ──────────────────────
+      const parsePit = (headers, rows) => {
+        const col=(headers.length?headers:(rows[0]||[])).map(h=>(h||'').toLowerCase().trim());
+        if (!col.some(h=>h==='ip')||!col.some(h=>h==='er'||h==='bb')) return null;
+        const ipI=col.indexOf('ip'),hI=cI(col,'h'),rI=cI(col,'r'),erI=col.indexOf('er'),
+              bbI=col.indexOf('bb'),soI=cI(col,'so','k'),npI=col.indexOf('np'),bfI=col.indexOf('bf');
+        if (ipI<0) return null;
+        const data=headers.length?rows:rows.slice(1),arr=[];
+        for (const row of data) {
+          const raw=(row[0]||'').trim();
+          if (!raw||/^(totals?|name|pitchers?)$/i.test(raw)) continue;
+          const name=cleanName(raw); if(!name||name.length<2) continue;
+          const ip=pf(row[ipI])||0; if(!ip) continue;
+          arr.push({name,ip,h:hI>=0?pi(row[hI])||0:0,r:rI>=0?pi(row[rI])||0:0,
+            er:erI>=0?pi(row[erI])||0:0,bb:bbI>=0?pi(row[bbI])||0:0,k:soI>=0?pi(row[soI])||0:0,
+            np:npI>=0?pi(row[npI])||0:0,bf:bfI>=0?pi(row[bfI])||0:0});
+        }
+        return arr.length?arr:null;
+      };
+      const pitTbls=tables.map(({headers,rows})=>parsePit(headers,rows)).filter(Boolean);
+      const [awayPitching,homePitching]=pitTbls.length>=2?[pitTbls[0],pitTbls[1]]:pitTbls.length===1?[pitTbls[0],[]]:[[],[]];
+
+      // ── Batavia-specific aliases for backward compat ──────────────────────
+      const batIsHome=/batavia/i.test(homeTeam), batIsAway=/batavia/i.test(awayTeam);
+      const batavia_batting =batIsHome?homeBatting :batIsAway?awayBatting :[];
+      const batavia_pitching=batIsHome?homePitching:batIsAway?awayPitching:[];
+      const opp_batting     =batIsHome?awayBatting :batIsAway?homeBatting :[];
+      const opp_pitching    =batIsHome?awayPitching:batIsAway?homePitching:[];
+      const opponent        =batIsHome?awayTeam:batIsAway?homeTeam:(awayTeam||'');
+      const bataviaScore    =batIsHome?homeScore:batIsAway?awayScore:null;
+      const oppScore        =batIsHome?awayScore:batIsAway?homeScore:null;
+
+      await pg.query(
+        `INSERT INTO game_stats(
+           season,game_id,game_date,
+           home_team,away_team,home_score,away_score,
+           home_batting,away_batting,home_pitching,away_pitching,
+           opponent,is_home,batavia_score,opp_score,result,
+           innings,batavia_batting,batavia_pitching,opp_batting,opp_pitching,
+           wp,lp,box_score_url,updated_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'',$16,$17,$18,$19,$20,'','','',NOW())
+         ON CONFLICT(season,game_id) DO UPDATE SET
+           game_date=$3,home_team=$4,away_team=$5,home_score=$6,away_score=$7,
+           home_batting=$8,away_batting=$9,home_pitching=$10,away_pitching=$11,
+           opponent=$12,is_home=$13,batavia_score=$14,opp_score=$15,
+           innings=$16,batavia_batting=$17,batavia_pitching=$18,
+           opp_batting=$19,opp_pitching=$20,updated_at=NOW()`,
+        [season,gameId,date,homeTeam||'',awayTeam||'',homeScore,awayScore,
+         JSON.stringify(homeBatting),JSON.stringify(awayBatting),
+         JSON.stringify(homePitching),JSON.stringify(awayPitching),
+         opponent,batIsHome,bataviaScore,oppScore,
+         JSON.stringify(innings),
+         JSON.stringify(batavia_batting),JSON.stringify(batavia_pitching),
+         JSON.stringify(opp_batting),JSON.stringify(opp_pitching)]
+      ).catch(e=>logScrape(`    DB error: ${e.message}`));
+
+      // ── Update pitch_availability for Batavia pitchers ────────────────────
+      for (const p of batavia_pitching) {
+        if (!p.name||!p.np) continue;
+        await pg.query(
+          `INSERT INTO pitch_availability(season,pitcher_name,team,last_outing_date,last_outing_pitches,last_outing_ip,is_manual,outing_type,notes)
+           VALUES($1,$2,'Batavia Muckdogs',$3,$4,$5,FALSE,'Game','')
+           ON CONFLICT(season,pitcher_name) DO UPDATE SET
+             last_outing_date=GREATEST(pitch_availability.last_outing_date,$3::date),
+             last_outing_pitches=CASE WHEN $3::date>=COALESCE(pitch_availability.last_outing_date,'1900-01-01') THEN $4 ELSE pitch_availability.last_outing_pitches END,
+             last_outing_ip=CASE WHEN $3::date>=COALESCE(pitch_availability.last_outing_date,'1900-01-01') THEN $5 ELSE pitch_availability.last_outing_ip END,
+             updated_at=NOW()
+           WHERE NOT pitch_availability.is_manual`,
+          [season,p.name,date,p.np,p.ip]
+        ).catch(()=>{});
+      }
+
+      logScrape(`    ✓ ${gameId}: home=${homeTeam||'?'} (${homeBatting.length}bat,${homePitching.length}pit) away=${awayTeam||'?'} (${awayBatting.length}bat,${awayPitching.length}pit)`);
+      saved++;
+    } catch (e) {
+      logScrape(`    Error ${gameId}: ${e.message}`);
+    }
+  }
+  await closeBrowser();
+  logScrape(`  ✓ ${saved}/${toScrape.length} games saved`);
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  MANUAL ROSTER SEED — manually-collected data for teams not yet on PGCBL
@@ -959,7 +1350,9 @@ async function runFullScrape() {
     // ── Secondary scrapes — failures are logged but don't abort the run ─────
     await scrapeRosters(season, br).catch(e => logScrape('Roster scrape error (non-fatal): ' + e.message));
     await scrapePitchCounts(season, br).catch(e => logScrape('Pitch count scrape error (non-fatal): ' + e.message));
+    await scrapeSchedule(season, br).catch(e => logScrape('Schedule scrape error (non-fatal): ' + e.message));
     await scrapeBoxScores(season, br).catch(e => logScrape('Box score scrape error (non-fatal): ' + e.message));
+    await scrapeGameStats(season, br).catch(e => logScrape('Game stats scrape error (non-fatal): ' + e.message));
 
     logScrape('═══ Scrape complete ═══');
   } catch (e) {
@@ -1125,6 +1518,16 @@ app.post('/api/refresh', async (req, res) => {
   if (isScraping) return res.json({ success: false, message: 'Scrape already in progress', isScraping: true });
   setImmediate(() => runFullScrape().catch(e => logScrape('Manual refresh error: ' + e.message)));
   res.json({ success: true, message: 'Scrape started — check /api/health for status' });
+});
+
+app.post('/api/scrape-game-stats', async (req, res) => {
+  res.json({ success: true, message: 'Game stats scrape started' });
+  setImmediate(async () => {
+    let br = null;
+    try { br = await getBrowser(); await scrapeGameStats(getSeason(), br); }
+    catch(e) { logScrape('Game stats scrape error: ' + e.message); }
+    finally { await closeBrowser(); }
+  });
 });
 
 app.post('/api/seed-rosters', async (req, res) => {
@@ -1606,6 +2009,307 @@ app.get('/api/scouting-data', async (req, res) => {
   }
 });
 
+// ─── Game stats endpoint ──────────────────────────────────────────────────────
+// Debug: inspect raw table structure from a box score page
+app.get('/api/debug-boxscore', async (req, res) => {
+  const gameId = req.query.gameId || '20260529_6w3u';
+  const season = getSeason();
+  const htmlUrl = req.query.url || `https://pgcbl.com/sports/bsb/${season}/boxscores/${gameId}`;
+  let br = null;
+  try {
+    br = await getBrowser();
+    // Fetch gamelog to see what links it contains
+    const logHTML = await getPageHTML(`https://pgcbl.com/sports/bsb/${season}/teams/bataviamuckdogs?view=gamelog`, br);
+    const logLinks = [];
+    for (const m of logHTML.matchAll(/href="([^"]*boxscores[^"]+)"/gi)) logLinks.push(m[1]);
+
+    // Fetch the target page
+    const html = await getPageHTML(htmlUrl, br, 5000);
+    const tables = parseHTMLTables(html);
+    const info = tables.map((t, i) => ({
+      idx: i,
+      headers: t.headers.slice(0, 15),
+      firstDataRow: t.rows[0]?.slice(0, 10),
+      rowCount: t.rows.length,
+      rawStart: stripTags(t.raw.slice(0, 300)),
+    }));
+    // Also check raw HTML for table tags
+    const tableTagCount = (html.match(/<table/gi) || []).length;
+    const abCount = (html.match(/\bAB\b/g) || []).length;
+    const ipCount = (html.match(/\bIP\b/g) || []).length;
+    const titleM = html.match(/<title[^>]*>(.*?)<\/title>/i);
+    res.json({ url: htmlUrl, htmlLen: html.length, tableCount: tables.length, tableTagCount, abCount, ipCount, title: titleM?.[1] || '', tables: info, logLinks: logLinks.slice(0, 20) });
+  } catch (e) {
+    res.json({ error: e.message });
+  } finally {
+    await closeBrowser();
+  }
+});
+
+app.get('/api/game-stats', async (req, res) => {
+  if (!pg) return res.json([]);
+  try {
+    const season   = getSeason();
+    const gameId   = req.query.gameId   || null;
+    const opponent = req.query.opponent || null;
+    const player   = req.query.player   || null;
+    const limit    = Math.min(parseInt(req.query.limit)||20, 50);
+    let q = 'SELECT * FROM game_stats WHERE season=$1';
+    const params = [season];
+    if (gameId)   { q += ` AND game_id=$${params.length+1}`;              params.push(gameId); }
+    if (opponent) { q += ` AND opponent ILIKE $${params.length+1}`;       params.push(`%${opponent}%`); }
+    q += ' ORDER BY game_date DESC NULLS LAST LIMIT $' + (params.length+1);
+    params.push(limit);
+    const { rows } = await pg.query(q, params);
+
+    let results = rows.map(r => ({
+      gameId:          r.game_id,
+      date:            r.game_date?.toISOString?.().slice(0,10) || null,
+      homeTeam:        r.home_team  || '',
+      awayTeam:        r.away_team  || '',
+      homeScore:       r.home_score,
+      awayScore:       r.away_score,
+      opponent:        r.opponent   || '',
+      isHome:          r.is_home,
+      bataviaScore:    r.batavia_score,
+      oppScore:        r.opp_score,
+      result:          r.result     || '',
+      innings:         r.innings    || [],
+      homeBatting:     r.home_batting   || [],
+      homePitching:    r.home_pitching  || [],
+      awayBatting:     r.away_batting   || [],
+      awayPitching:    r.away_pitching  || [],
+      bataviaBatting:  r.batavia_batting  || [],
+      bataviaPitching: r.batavia_pitching || [],
+      oppBatting:      r.opp_batting      || [],
+      oppPitching:     r.opp_pitching     || [],
+      wp:              r.wp || '',
+      lp:              r.lp || '',
+    }));
+
+    // Filter by player name if requested
+    if (player) {
+      const pl = player.toLowerCase();
+      results = results.map(g => {
+        const allBat   = [...(g.homeBatting||[]),...(g.awayBatting||[])];
+        const allPitch = [...(g.homePitching||[]),...(g.awayPitching||[])];
+        const batLine  = allBat.find(p=>p.name?.toLowerCase().includes(pl));
+        const pitchLine= allPitch.find(p=>p.name?.toLowerCase().includes(pl));
+        if (!batLine && !pitchLine) return null;
+        return { ...g, playerBatting: batLine||null, playerPitching: pitchLine||null };
+      }).filter(Boolean);
+    }
+
+    res.json(results);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Cross-team statistical query endpoint ────────────────────────────────────
+// Supports: player stats, team stats, leaderboards, ERA, AVG, K, pitch counts
+// Params: player, team, type (batter|pitcher), lastN, dateFrom, dateTo, stat, limit
+app.get('/api/query-stats', async (req, res) => {
+  if (!pg) return res.json({ error: 'DB unavailable' });
+  try {
+    const season  = getSeason();
+    const player  = req.query.player  || null;
+    const team    = req.query.team    || null;
+    const type    = (req.query.type   || '').toLowerCase(); // 'batter' | 'pitcher' | ''
+    const lastN   = parseInt(req.query.lastN)  || 0;
+    const limit   = Math.min(parseInt(req.query.limit)||50, 200);
+    let dateFrom  = req.query.dateFrom || null;
+    let dateTo    = req.query.dateTo   || null;
+    const stat    = (req.query.stat   || '').toLowerCase(); // 'era','avg','k','hr','rbi','np','ip',...
+
+    // lastN = last N games for Batavia (or specified team); dateFrom overrides
+    if (lastN > 0 && !dateFrom) {
+      const { rows: recentDates } = await pg.query(
+        `SELECT DISTINCT game_date FROM game_stats WHERE season=$1 AND game_date IS NOT NULL
+         ORDER BY game_date DESC LIMIT $2`, [season, lastN]
+      );
+      if (recentDates.length) dateFrom = recentDates[recentDates.length-1].game_date?.toISOString?.().slice(0,10);
+    }
+
+    // Build WHERE clause for date range
+    const params = [season];
+    let dateWhere = '';
+    if (dateFrom) { params.push(dateFrom); dateWhere += ` AND game_date >= $${params.length}`; }
+    if (dateTo)   { params.push(dateTo);   dateWhere += ` AND game_date <= $${params.length}`; }
+
+    // Build team filter
+    let teamWhere = '';
+    if (team) {
+      params.push(`%${team}%`);
+      teamWhere = ` AND (home_team ILIKE $${params.length} OR away_team ILIKE $${params.length})`;
+    }
+
+    const { rows: games } = await pg.query(
+      `SELECT game_id, game_date, home_team, away_team, home_score, away_score,
+              home_batting, home_pitching, away_batting, away_pitching, innings
+       FROM game_stats
+       WHERE season=$1${dateWhere}${teamWhere}
+       ORDER BY game_date DESC
+       LIMIT ${limit}`,
+      params
+    );
+
+    if (games.length === 0) {
+      return res.json({ games: 0, players: [], summary: 'No games found for that filter.' });
+    }
+
+    // ── Aggregate per player ───────────────────────────────────────────────
+    const pi2 = v => parseInt(v)||0;
+    const pf2 = v => parseFloat(v)||0;
+
+    const batterMap  = {}; // key: "name|team"
+    const pitcherMap = {}; // key: "name|team"
+
+    for (const g of games) {
+      const gDate = g.game_date?.toISOString?.().slice(0,10) || '';
+      const sides = [
+        { arr: g.home_batting  ||[], teamName: g.home_team||'', opp: g.away_team||'' },
+        { arr: g.away_batting  ||[], teamName: g.away_team||'', opp: g.home_team||'' },
+      ];
+      const pitchSides = [
+        { arr: g.home_pitching ||[], teamName: g.home_team||'', opp: g.away_team||'' },
+        { arr: g.away_pitching ||[], teamName: g.away_team||'', opp: g.home_team||'' },
+      ];
+
+      for (const { arr, teamName, opp } of sides) {
+        for (const p of arr) {
+          if (!p.name) continue;
+          if (player && !p.name.toLowerCase().includes(player.toLowerCase())) continue;
+          if (team && !teamName.toLowerCase().includes(team.toLowerCase())) continue;
+          const key = `${p.name}|${teamName}`;
+          if (!batterMap[key]) batterMap[key] = { name: p.name, team: teamName, games:0, ab:0, h:0, r:0, rbi:0, bb:0, k:0, hr:0, sf:0, hbp:0, gameLog:[] };
+          const b = batterMap[key];
+          b.games++; b.ab+=pi2(p.ab); b.h+=pi2(p.h); b.r+=pi2(p.r);
+          b.rbi+=pi2(p.rbi); b.bb+=pi2(p.bb); b.k+=pi2(p.k); b.hr+=pi2(p.hr);
+          b.sf+=pi2(p.sf); b.hbp+=pi2(p.hbp);
+          b.gameLog.push({ date: gDate, opp, ab:pi2(p.ab), h:pi2(p.h), r:pi2(p.r), rbi:pi2(p.rbi), hr:pi2(p.hr), bb:pi2(p.bb), k:pi2(p.k) });
+        }
+      }
+      for (const { arr, teamName, opp } of pitchSides) {
+        for (const p of arr) {
+          if (!p.name) continue;
+          if (player && !p.name.toLowerCase().includes(player.toLowerCase())) continue;
+          if (team && !teamName.toLowerCase().includes(team.toLowerCase())) continue;
+          const key = `${p.name}|${teamName}`;
+          if (!pitcherMap[key]) pitcherMap[key] = { name: p.name, team: teamName, games:0, ip:0, h:0, r:0, er:0, bb:0, k:0, np:0, bf:0, gameLog:[] };
+          const pt = pitcherMap[key];
+          pt.games++; pt.ip+=pf2(p.ip); pt.h+=pi2(p.h); pt.r+=pi2(p.r);
+          pt.er+=pi2(p.er); pt.bb+=pi2(p.bb); pt.k+=pi2(p.k); pt.np+=pi2(p.np); pt.bf+=pi2(p.bf);
+          pt.gameLog.push({ date: gDate, opp, ip:pf2(p.ip), er:pi2(p.er), k:pi2(p.k), np:pi2(p.np), bb:pi2(p.bb) });
+        }
+      }
+    }
+
+    // ── Compute derived stats ──────────────────────────────────────────────
+    const batters = Object.values(batterMap).map(b => ({
+      ...b,
+      avg: b.ab > 0 ? (b.h/b.ab).toFixed(3) : '.000',
+      obp: (b.ab+b.bb+b.hbp) > 0 ? ((b.h+b.bb+b.hbp)/(b.ab+b.bb+b.hbp+b.sf)).toFixed(3) : '.000',
+      slg: b.ab > 0 ? ((b.h+b.hr)/b.ab).toFixed(3) : '.000', // approx (no 2B/3B data)
+    }));
+    const pitchers = Object.values(pitcherMap).map(p => ({
+      ...p,
+      ipFmt: Math.floor(p.ip) + '.' + Math.round((p.ip - Math.floor(p.ip))*3),
+      era: p.ip > 0 ? ((p.er / p.ip) * 9).toFixed(2) : '-.--',
+      whip: p.ip > 0 ? ((p.bb + p.h) / p.ip).toFixed(2) : '-.--',
+      kPer9: p.ip > 0 ? ((p.k / p.ip) * 9).toFixed(1) : '0.0',
+    }));
+
+    // Sort by requested stat or default
+    const sortBat = (a, b) => {
+      if (stat==='avg') return parseFloat(b.avg)-parseFloat(a.avg);
+      if (stat==='hr')  return b.hr-a.hr;
+      if (stat==='rbi') return b.rbi-a.rbi;
+      if (stat==='k' && type==='batter') return a.k-b.k; // fewer K is better
+      return b.h-a.h; // default: hits
+    };
+    const sortPit = (a, b) => {
+      if (stat==='era')  return parseFloat(a.era)-parseFloat(b.era);
+      if (stat==='k')    return b.k-a.k;
+      if (stat==='whip') return parseFloat(a.whip)-parseFloat(b.whip);
+      if (stat==='np')   return b.np-a.np;
+      if (stat==='ip')   return b.ip-a.ip;
+      return parseFloat(a.era)-parseFloat(b.era); // default: ERA
+    };
+
+    batters.sort(sortBat);
+    pitchers.sort(sortPit);
+
+    // ── Filter by type ─────────────────────────────────────────────────────
+    const result = {
+      gamesSearched: games.length,
+      dateRange: { from: dateFrom||'all', to: dateTo||'today' },
+      filters: { player: player||null, team: team||null, type: type||'all', lastN: lastN||null },
+      batters:  type === 'pitcher' ? [] : batters.slice(0, 30),
+      pitchers: type === 'batter'  ? [] : pitchers.slice(0, 30),
+    };
+
+    // If player-specific, include game log
+    if (player) {
+      if (batters.length) result.batters[0].gameLog = batters[0]?.gameLog || [];
+      if (pitchers.length) result.pitchers[0].gameLog = pitchers[0]?.gameLog || [];
+    }
+
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Schedule endpoint ───────────────────────────────────────────────────────
+app.get('/api/schedule', async (req, res) => {
+  if (!pg) return res.json([]);
+  try {
+    const season = getSeason();
+    const { rows } = await pg.query(
+      `SELECT * FROM schedule WHERE season=$1 ORDER BY game_date ASC`,
+      [season]
+    );
+    res.json(rows.map(r => ({
+      gameId:       r.game_id,
+      date:         r.game_date?.toISOString?.().slice(0,10) || null,
+      time:         r.game_time || '',
+      homeTeam:     r.home_team,
+      awayTeam:     r.away_team,
+      location:     r.location || '',
+      bataviaScore: r.batavia_score,
+      oppScore:     r.opp_score,
+      result:       r.result || '',
+      isHome:       r.is_home,
+      status:       r.status,
+      opponent:     r.is_home ? r.away_team : r.home_team,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Box scores endpoint ──────────────────────────────────────────────────────
+app.get('/api/boxscores', async (req, res) => {
+  if (!pg) return res.json([]);
+  try {
+    const season  = getSeason();
+    const gameId  = req.query.gameId || null;
+    const limit   = Math.min(parseInt(req.query.limit)||20, 50);
+    let q = 'SELECT * FROM box_scores WHERE season=$1';
+    const params = [season];
+    if (gameId) { q += ` AND game_id=$${params.length+1}`; params.push(gameId); }
+    q += ' ORDER BY game_date DESC NULLS LAST LIMIT $' + (params.length+1);
+    params.push(limit);
+    const { rows } = await pg.query(q, params);
+    res.json(rows.map(r => ({
+      gameId:      r.game_id,
+      date:        r.game_date?.toISOString?.().slice(0,10) || null,
+      homeTeam:    r.home_team,
+      awayTeam:    r.away_team,
+      homeScore:   r.home_score,
+      awayScore:   r.away_score,
+      status:      r.status,
+      innings:     r.innings || [],
+      pitcherLines: r.pitcher_lines || [],
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── Standings (individual endpoint) ─────────────────────────────────────────
 app.get('/api/standings', async (req, res) => {
   if (!pg) return res.json([]);
@@ -1652,25 +2356,7 @@ app.get('/api/pitchers', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Box scores (individual endpoint) ────────────────────────────────────────
-app.get('/api/boxscores', async (req, res) => {
-  if (!pg) return res.json([]);
-  try {
-    const season = getSeason();
-    const { rows } = await pg.query(
-      'SELECT * FROM box_scores WHERE season=$1 ORDER BY game_date DESC LIMIT 30', [season]
-    );
-    res.json(rows.map(r => ({
-      gameId:    r.game_id,
-      home:      r.home_team,
-      away:      r.away_team,
-      homeScore: r.home_score,
-      awayScore: r.away_score,
-      date:      r.game_date?.toISOString?.().slice(0,10) || null,
-      status:    r.status === 'F' ? 'Final' : r.status,
-    })));
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// (duplicate /api/boxscores removed — first registration at line 2287 takes precedence)
 
 // ─── Pitch availability (pre-calculated GREEN/YELLOW/RED) ────────────────────
 //  Rules match Dewey's calcPitchAvailability():
@@ -1793,6 +2479,17 @@ async function startup() {
       runFullScrape().catch(e => logScrape('Startup scrape error: ' + e.message));
     } else {
       logScrape(`Data is ${age.toFixed(1)}h old — fresh enough, no startup scrape needed`);
+      // Even if main data is fresh, scrape game stats if table is empty
+      if (pg) {
+        const { rows } = await pg.query(`SELECT COUNT(*) AS c FROM game_stats WHERE season=$1`, [getSeason()]).catch(()=>({rows:[{c:'0'}]}));
+        if (parseInt(rows[0]?.c||0) === 0) {
+          logScrape('game_stats table empty — running targeted game stats scrape');
+          let br = null;
+          try { br = await getBrowser(); await scrapeGameStats(getSeason(), br); }
+          catch(e) { logScrape('Startup game stats error: ' + e.message); }
+          finally { await closeBrowser(); }
+        }
+      }
     }
   }, 3000);
 
