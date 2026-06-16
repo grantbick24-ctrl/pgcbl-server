@@ -405,7 +405,12 @@ async function getPageHTML(url, br, extraWaitMs = 0) {
         }
       })(),
       new Promise((_, reject) => setTimeout(() => reject(new Error('Puppeteer 60s hard timeout')), 60000)),
-    ]).catch(e => { logScrape(`  Puppeteer hard timeout for ${url} — trying fetch`); return null; });
+    ]).catch(async e => {
+      // Hard timeout — browser is hung/crashed; close it so fetch fallback is instant for remaining calls
+      logScrape(`  Puppeteer hard timeout for ${url} — closing crashed browser, using fetch`);
+      await closeBrowser().catch(() => {});
+      return null;
+    });
 
     if (puppeteerResult) return puppeteerResult;
   }
@@ -746,94 +751,220 @@ async function scrapePitchCounts(season, br) {
 }
 
 // ─── 6. Schedule scraper ─────────────────────────────────────────────────────
-async function scrapeSchedule(season, br) {
-  logScrape('Scraping Batavia schedule...');
-  const urls = [
-    `https://pgcbl.com/sports/bsb/${season}/teams/bataviamuckdogs?view=sched`,
-    `https://pgcbl.prestosports.com/sports/bsb/${season}/teams/bataviamuckdogs?view=sched`,
-    `https://pgcbl.prestosports.com/sports/bsb/${season}/schedule`,
-  ];
-  let schedHTML = '';
-  for (const url of urls) {
-    try { schedHTML = await getPageHTML(url, br); if (schedHTML.length > 2000) break; } catch {}
-  }
-
-  // Extract all box score links from the page (used to match to game rows)
-  const bsLinks = [];
-  for (const m of (schedHTML||'').matchAll(/href="([^"]*\/boxscores\/[^"?#.]+)"/gi)) {
-    const p = m[1];
-    bsLinks.push(p.startsWith('http') ? p : `https://pgcbl.com${p}`);
-  }
-
-  const tables = parseHTMLTables(schedHTML);
+// Parse a canusamuckdogs.com rendered HTML schedule page (AngularJS / BaseballShift)
+function parseCanusaScheduleHTML(html) {
   const games = [];
+  // BaseballShift renders schedule as a list; look for game data in rendered text
+  // Each game block contains date, time, opponent, location, score
+  const MONTH_MAP = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
 
-  for (const { headers, rows } of tables) {
-    const hL = headers.map(h => h.toLowerCase());
-    if (!hL.some(h => /date/i.test(h))) continue;
-    const dIdx = hL.findIndex(h => /date/i.test(h));
-    const tIdx = hL.findIndex(h => /time/i.test(h));
-    const oIdx = hL.findIndex(h => /opp/i.test(h));
-    const rIdx = hL.findIndex(h => /result|score|w\/l/i.test(h));
-    const lIdx = hL.findIndex(h => /loc|site/i.test(h));
-    if (dIdx < 0) continue;
+  // Strategy: extract all text blocks and find patterns
+  // Remove script/style tags, collapse whitespace
+  const clean = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').replace(/\s+/g,' ');
 
-    rows.forEach((row, i) => {
-      const rawDate = row[dIdx] || '';
-      const rawOpp  = oIdx >= 0 ? (row[oIdx]||'') : '';
-      const rawRes  = rIdx >= 0 ? (row[rIdx]||'') : '';
-      const dm = rawDate.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-      if (!dm) return;
-      const yr = dm[3].length===2?'20'+dm[3]:dm[3];
-      const gameDate = `${yr}-${dm[1].padStart(2,'0')}-${dm[2].padStart(2,'0')}`;
-      const opp = rawOpp.replace(/[@*#]/g,'').trim();
-      const isHome = !rawOpp.startsWith('@') && !/\bat\s/i.test(rawOpp);
-      const location = lIdx>=0 ? (row[lIdx]||'') : (isHome ? 'Dwyer Stadium, Batavia NY' : '');
-      const gameTime = tIdx>=0 ? (row[tIdx]||'') : '';
-      let result='', bataviaScore=null, oppScore=null, status='scheduled';
-      const rm = rawRes.match(/([WL])\D*(\d+)\D*-\D*(\d+)/i);
-      if (rm) { result=rm[1].toUpperCase(); bataviaScore=Number(rm[2]); oppScore=Number(rm[3]); status='final'; }
-      else { const sm=rawRes.match(/(\d+)-(\d+)/); if(sm){bataviaScore=Number(sm[1]);oppScore=Number(sm[2]);status='final';} }
-      const gameId = `bat_${gameDate.replace(/-/g,'')}`;
+  // Date patterns: "May 29" / "May 29, 2026" / "5/29" / "5/29/2026"
+  // Opponent patterns: "vs. Elmira" / "@ Olean" / "at Olean"
+  // Score patterns: "W 9-6" / "L 7-10" / "9-6 W"
+  // Time patterns: "7:05 PM" / "7:05pm ET"
+
+  // Split on date boundaries
+  const dateRe = /\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})(?:,?\s*(20\d{2}))?\b|\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/gi;
+  const matches = [...clean.matchAll(dateRe)];
+
+  for (let mi = 0; mi < matches.length; mi++) {
+    const m = matches[mi];
+    const mStart = m.index;
+    const mEnd   = mi+1 < matches.length ? matches[mi+1].index : clean.length;
+    const block  = clean.slice(mStart, Math.min(mEnd, mStart+300));
+
+    // Parse date
+    let gameDate = '';
+    if (m[1]) { // "May 29"
+      const mon = MONTH_MAP[(m[1].toLowerCase().slice(0,3))];
+      const day = parseInt(m[2]);
+      const yr  = m[3] ? parseInt(m[3]) : new Date().getFullYear();
+      if (mon && day) gameDate = `${yr}-${String(mon).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    } else if (m[4]) { // "5/29"
+      const mon = parseInt(m[4]), day = parseInt(m[5]);
+      let yr = m[6] ? parseInt(m[6]) : new Date().getFullYear();
+      if (yr < 100) yr += 2000;
+      if (mon && day) gameDate = `${yr}-${String(mon).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    }
+    if (!gameDate || gameDate < '2026-01-01') continue;
+
+    // Opponent and home/away
+    const oppM = block.match(/\b(?:vs\.?\s*|vs\s+|@\s*|at\s+)([A-Z][A-Za-z ]+(?:Muckdogs|Pioneers|Oilers|Skunks|Ironbacks|Americans|Red Wings|Doubledays|Pilots|Diesel|Falcons|Express|Storm|Monarchs|Thunder)[^\d,]*)/i);
+    if (!oppM) continue;
+    const rawOpp = oppM[0].trim();
+    const isHome = !/^[@]|^at\s/i.test(rawOpp.replace(/^vs\.?\s*/i,'').trim()) && !/^@/.test(oppM[0]);
+    const opp    = oppM[1].replace(/\s+/g,' ').trim().replace(/[,.]*$/, '');
+    if (!opp || opp.toLowerCase().includes('batavia')) continue;
+
+    // Time
+    const timeM = block.match(/\b(\d{1,2}:\d{2}\s*[AP]M)\b/i);
+    const gameTime = timeM ? timeM[1] : '';
+
+    // Score/result
+    let result='', bataviaScore=null, oppScore=null, status='scheduled';
+    const wlM = block.match(/\b([WL])\s+(\d{1,2})\s*-\s*(\d{1,2})\b/i)
+             || block.match(/\b(\d{1,2})\s*-\s*(\d{1,2})\s+([WL])\b/i);
+    if (wlM) {
+      if (/^[WL]$/i.test(wlM[1])) {
+        result=wlM[1].toUpperCase(); bataviaScore=Number(wlM[2]); oppScore=Number(wlM[3]);
+      } else {
+        result=wlM[3].toUpperCase(); bataviaScore=Number(wlM[1]); oppScore=Number(wlM[2]);
+      }
+      status='final';
+    }
+
+    // Location
+    const locM = block.match(/\b(Dwyer Stadium|[A-Z][A-Za-z ]+(?:Stadium|Field|Park|Complex))[^,]*/i);
+    const location = locM ? locM[0].trim() : (isHome ? 'Dwyer Stadium, Batavia NY' : '');
+
+    const gameId = `bat_${gameDate.replace(/-/g,'')}`;
+    if (!games.find(g=>g.gameId===gameId)) {
       games.push({ gameId, gameDate, gameTime, isHome,
         homeTeam: isHome?'Batavia Muckdogs':opp, awayTeam: isHome?opp:'Batavia Muckdogs',
-        location, bataviaScore, oppScore, result, status,
-        boxScoreUrl: bsLinks[i] || '' });
-    });
-    if (games.length) break;
+        location, bataviaScore, oppScore, result, status, boxScoreUrl: '' });
+    }
   }
+  return games;
+}
 
-  // Fallback: gamelog page for completed games
-  if (!games.length || !games.some(g=>g.status==='final')) {
-    logScrape('  Trying gamelog for results...');
-    const logHTML = await getPageHTML(
-      `https://pgcbl.com/sports/bsb/${season}/teams/bataviamuckdogs?view=gamelog`, br
-    );
-    const logLinks = [];
-    for (const m of logHTML.matchAll(/href="([^"]*\/boxscores\/[^"?#.]+)"/gi))
-      logLinks.push(m[1].startsWith('http')?m[1]:`https://pgcbl.com${m[1]}`);
+async function scrapeSchedule(season, br) {
+  logScrape('Scraping Batavia schedule...');
+  let games = [];
 
-    for (const { headers, rows } of parseHTMLTables(logHTML)) {
-      const hL = headers.map(h=>h.toLowerCase());
-      if (!hL.some(h=>/date/i.test(h))) continue;
-      const dI=hL.findIndex(h=>/date/i.test(h)), oI=hL.findIndex(h=>/opp/i.test(h)), rI=hL.findIndex(h=>/result/i.test(h));
-      rows.forEach((row,i) => {
-        const dm=(row[dI]||'').match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-        if(!dm) return;
-        const yr=dm[3].length===2?'20'+dm[3]:dm[3];
-        const gameDate=`${yr}-${dm[1].padStart(2,'0')}-${dm[2].padStart(2,'0')}`;
-        const opp=oI>=0?(row[oI]||'').replace(/[@*#]/g,'').trim():'';
-        let result='',bataviaScore=null,oppScore=null;
-        if(rI>=0){const rm=(row[rI]||'').match(/([WL])\D*(\d+)\D*-\D*(\d+)/i);if(rm){result=rm[1].toUpperCase();bataviaScore=Number(rm[2]);oppScore=Number(rm[3]);}}
-        const gameId=`bat_${gameDate.replace(/-/g,'')}`;
-        const ex=games.find(g=>g.gameId===gameId);
-        if(ex){if(result){ex.result=result;ex.bataviaScore=bataviaScore;ex.oppScore=oppScore;ex.status='final';}if(!ex.boxScoreUrl&&logLinks[i])ex.boxScoreUrl=logLinks[i];}
-        else games.push({gameId,gameDate,gameTime:'',isHome:true,homeTeam:'Batavia Muckdogs',awayTeam:opp,location:'',bataviaScore,oppScore,result,status:result?'final':'scheduled',boxScoreUrl:logLinks[i]||''});
+  // ── Primary: canusamuckdogs.com with Puppeteer + XHR interception ────────────
+  if (br) {
+    let page = null;
+    try {
+      page = await br.newPage();
+      await page.setUserAgent(UA);
+      await page.setViewport({ width: 1280, height: 800 });
+
+      let capturedJson = null;
+
+      // Allow all requests (XHR needed for AngularJS); capture schedule API response
+      await page.setRequestInterception(true);
+      page.on('request', req => {
+        const t = req.resourceType();
+        if (['image','font','media'].includes(t)) req.abort();
+        else req.continue();
       });
-      if(games.length) break;
+      page.on('response', async resp => {
+        const url = resp.url();
+        if (/digitalshift\.ca.*schedule|schedule.*digitalshift\.ca/i.test(url)) {
+          try { const j = await resp.json(); if (j) capturedJson = j; } catch {}
+        }
+      });
+
+      await page.goto('https://www.canusamuckdogs.com/schedule', { waitUntil: 'networkidle2', timeout: 35000 })
+        .catch(() => page.goto('https://www.canusamuckdogs.com/schedule', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(()=>{}));
+      // Extra wait for Angular to render
+      await new Promise(r => setTimeout(r, 4000));
+
+      // Try to parse XHR-captured JSON first
+      if (capturedJson) {
+        logScrape('  Captured digitalshift schedule API response');
+        const arr = Array.isArray(capturedJson) ? capturedJson
+          : (capturedJson.games || capturedJson.schedule || capturedJson.data || []);
+        for (const g of arr) {
+          // digitalshift fields: date_time (ISO), home_team {name}, visiting_team {name},
+          // home_score, visiting_score, status ('F'=final, 'S'=scheduled)
+          const dt = g.date_time || g.game_date || g.date || '';
+          const rawDate = dt.slice(0,10); // YYYY-MM-DD
+          if (!rawDate.match(/^\d{4}-\d{2}-\d{2}/) || rawDate < '2026-01-01') continue;
+          const homeTeam = (g.home_team?.name || g.home_team || '').trim();
+          const awayTeam = (g.visiting_team?.name || g.visiting_team || g.away_team?.name || g.away_team || '').trim();
+          const isHome = /batavia/i.test(homeTeam);
+          const opp = isHome ? awayTeam : homeTeam;
+          if (!opp || /batavia/i.test(opp)) continue;
+          const isFinal = /^F$/i.test(g.status) || g.status==='final' || (g.home_score!=null && g.visiting_score!=null && g.status!=='scheduled');
+          const homeScore = g.home_score != null ? Number(g.home_score) : null;
+          const visitScore = g.visiting_score != null ? Number(g.visiting_score) : null;
+          const batScore = isHome ? homeScore : visitScore;
+          const oppScore = isHome ? visitScore : homeScore;
+          const result = isFinal && batScore!=null ? (batScore > oppScore ? 'W' : batScore < oppScore ? 'L' : '') : '';
+          const gameTime = dt.length>10 ? new Date(dt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) : (g.time||'');
+          const gameId = `bat_${rawDate.replace(/-/g,'')}`;
+          if (!games.find(x=>x.gameId===gameId))
+            games.push({ gameId, gameDate: rawDate, gameTime, isHome,
+              homeTeam: isHome?'Batavia Muckdogs':opp, awayTeam: isHome?opp:'Batavia Muckdogs',
+              location: isHome?'Dwyer Stadium, Batavia NY':'', bataviaScore: batScore,
+              oppScore, result, status: isFinal?'final':'scheduled', boxScoreUrl:'' });
+        }
+      }
+
+      // If XHR not captured, parse rendered DOM
+      if (!games.length) {
+        logScrape('  No XHR captured — parsing rendered DOM');
+        const html = await page.content();
+        games = parseCanusaScheduleHTML(html);
+        logScrape(`  DOM parse: ${games.length} games`);
+      }
+
+      await page.close();
+    } catch(e) {
+      if (page) try { await page.close(); } catch {}
+      logScrape('  canusamuckdogs Puppeteer error: ' + e.message);
     }
   }
 
+  // ── Fallback: PrestoSports scraping if canusamuckdogs failed ─────────────────
+  if (!games.length) {
+    logScrape('  Falling back to PrestoSports schedule...');
+    const urls = [
+      `https://pgcbl.prestosports.com/sports/bsb/${season}/teams/bataviamuckdogs?view=schedule`,
+      `https://pgcbl.com/sports/bsb/${season}/teams/bataviamuckdogs?view=schedule`,
+      `https://pgcbl.com/sports/bsb/${season}/teams/bataviamuckdogs?view=sched`,
+    ];
+    let schedHTML = '';
+    for (const url of urls) {
+      try { schedHTML = await getPageHTML(url, br); if (schedHTML.length > 2000) break; } catch {}
+    }
+
+    const bsLinks = [];
+    for (const m of (schedHTML||'').matchAll(/href="([^"]*\/boxscores\/[^"?#.]+)"/gi))
+      bsLinks.push(m[1].startsWith('http')?m[1]:`https://pgcbl.com${m[1]}`);
+
+    for (const { headers, rows } of parseHTMLTables(schedHTML)) {
+      const hL = headers.map(h => h.toLowerCase());
+      if (!hL.some(h => /date/i.test(h))) continue;
+      const dIdx=hL.findIndex(h=>/date/i.test(h)), tIdx=hL.findIndex(h=>/time/i.test(h));
+      const oIdx=hL.findIndex(h=>/opp/i.test(h)), rIdx=hL.findIndex(h=>/result|score|w\/l/i.test(h));
+      const lIdx=hL.findIndex(h=>/loc|site/i.test(h));
+      if (dIdx < 0) continue;
+      rows.forEach((row,i) => {
+        const dm=(row[dIdx]||'').match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+        if(!dm) return;
+        const yr=dm[3].length===2?'20'+dm[3]:dm[3];
+        const gameDate=`${yr}-${dm[1].padStart(2,'0')}-${dm[2].padStart(2,'0')}`;
+        const rawOpp=oIdx>=0?(row[oIdx]||''):'';
+        const isHome=!rawOpp.startsWith('@')&&!/\bat\s/i.test(rawOpp);
+        const opp=rawOpp.replace(/[@*#]/g,'').replace(/^\s*at\s+/i,'').trim();
+        const gameTime=tIdx>=0?(row[tIdx]||''):'';
+        let result='',bataviaScore=null,oppScore=null,status='scheduled';
+        const rawRes=rIdx>=0?(row[rIdx]||''):'';
+        const rm=rawRes.match(/([WL])\D*(\d+)\D*-\D*(\d+)/i);
+        if(rm){result=rm[1].toUpperCase();bataviaScore=Number(rm[2]);oppScore=Number(rm[3]);status='final';}
+        else{const sm=rawRes.match(/(\d+)-(\d+)/);if(sm){bataviaScore=Number(sm[1]);oppScore=Number(sm[2]);status='final';}}
+        const gameId=`bat_${gameDate.replace(/-/g,'')}`;
+        if(!games.find(g=>g.gameId===gameId))
+          games.push({gameId,gameDate,gameTime,isHome,
+            homeTeam:isHome?'Batavia Muckdogs':opp, awayTeam:isHome?opp:'Batavia Muckdogs',
+            location:lIdx>=0?(row[lIdx]||''):(isHome?'Dwyer Stadium, Batavia NY':''),
+            bataviaScore,oppScore,result,status,boxScoreUrl:bsLinks[i]||''});
+      });
+      if (games.length) break;
+    }
+  }
+
+  logScrape(`  Schedule source: ${games.length} games found`);
   if (!pg) return games;
   let saved=0;
   for (const g of games) {
@@ -1506,6 +1637,35 @@ async function assembleStats() {
 //  API ROUTES
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ── Spotify Client Credentials token proxy ───────────────────────────
+// Returns a short-lived access token.  NOTE: Client Credentials scope does
+// NOT include user-playback endpoints (user-modify-playback-state).
+// Token is cached server-side and refreshed automatically before expiry.
+let _spotifyTokenCache = null;
+app.get('/api/spotify-token', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  const SPOTIFY_CLIENT_ID     = 'ae037f5460dd4a598d62351336d4be99';
+  const SPOTIFY_CLIENT_SECRET = 'e94b05de12504f1781a21a3799218325';
+  try {
+    // Serve cached token if still valid (>30s remaining)
+    if (_spotifyTokenCache && Date.now() < _spotifyTokenCache.expiresAt - 30000) {
+      return res.json({ access_token: _spotifyTokenCache.token, from_cache: true });
+    }
+    const creds = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64');
+    const r = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'grant_type=client_credentials'
+    });
+    const d = await r.json();
+    if (!d.access_token) return res.status(502).json({ error: d.error_description || 'Spotify token error' });
+    _spotifyTokenCache = { token: d.access_token, expiresAt: Date.now() + (d.expires_in || 3600) * 1000 };
+    res.json({ access_token: d.access_token, expires_in: d.expires_in });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/health', async (req, res) => {
   const lastScrape = await getMetaValue('last_scrape');
   const lastError  = await getMetaValue('last_scrape_error');
@@ -1605,7 +1765,7 @@ app.post('/api/scouting/:key', async (req, res) => {
 app.get('/api/pitches', async (req, res) => {
   if (!pg) return res.json({});
   try {
-    const { rows } = await pg.query('SELECT pitcher_name,team,outings FROM pitch_avail');
+    const { rows } = await pg.query("SELECT pitcher_name,team,outings FROM pitch_avail WHERE team='Batavia Muckdogs'");
     const result = {};
     rows.forEach(r => { result[r.pitcher_name] = { name: r.pitcher_name, team: r.team, outings: r.outings }; });
     res.json(result);
@@ -2069,39 +2229,50 @@ app.get('/api/game-stats', async (req, res) => {
     const gameId   = req.query.gameId   || null;
     const opponent = req.query.opponent || null;
     const player   = req.query.player   || null;
-    const limit    = Math.min(parseInt(req.query.limit)||20, 50);
+    const date     = req.query.date     || null;  // YYYY-MM-DD exact match
+    const team     = req.query.team     || null;  // home or away team name (partial)
+    const limit    = Math.min(parseInt(req.query.limit)||20, 200);
     let q = 'SELECT * FROM game_stats WHERE season=$1';
     const params = [season];
-    if (gameId)   { q += ` AND game_id=$${params.length+1}`;              params.push(gameId); }
-    if (opponent) { q += ` AND opponent ILIKE $${params.length+1}`;       params.push(`%${opponent}%`); }
+    if (gameId)   { q += ` AND game_id=$${params.length+1}`;                                                          params.push(gameId); }
+    if (opponent) { q += ` AND opponent ILIKE $${params.length+1}`;                                                   params.push(`%${opponent}%`); }
+    if (date)     { q += ` AND game_date::date=$${params.length+1}`;                                                  params.push(date); }
+    if (team)     { q += ` AND (home_team ILIKE $${params.length+1} OR away_team ILIKE $${params.length+1})`; params.push(`%${team}%`); }
     q += ' ORDER BY game_date DESC NULLS LAST LIMIT $' + (params.length+1);
     params.push(limit);
     const { rows } = await pg.query(q, params);
 
-    let results = rows.map(r => ({
-      gameId:          r.game_id,
-      date:            r.game_date?.toISOString?.().slice(0,10) || null,
-      homeTeam:        r.home_team  || '',
-      awayTeam:        r.away_team  || '',
-      homeScore:       r.home_score,
-      awayScore:       r.away_score,
-      opponent:        r.opponent   || '',
-      isHome:          r.is_home,
-      bataviaScore:    r.batavia_score,
-      oppScore:        r.opp_score,
-      result:          r.result     || '',
-      innings:         r.innings    || [],
-      homeBatting:     r.home_batting   || [],
-      homePitching:    r.home_pitching  || [],
-      awayBatting:     r.away_batting   || [],
-      awayPitching:    r.away_pitching  || [],
-      bataviaBatting:  r.batavia_batting  || [],
-      bataviaPitching: r.batavia_pitching || [],
-      oppBatting:      r.opp_batting      || [],
-      oppPitching:     r.opp_pitching     || [],
-      wp:              r.wp || '',
-      lp:              r.lp || '',
-    }));
+    let results = rows.map(r => {
+      // Fall back to old batavia/opp columns for games scraped before generic schema
+      const homeBat   = r.home_batting?.length   ? r.home_batting   : (r.is_home ? (r.batavia_batting||[]) : (r.opp_batting||[]));
+      const awayBat   = r.away_batting?.length   ? r.away_batting   : (r.is_home ? (r.opp_batting||[])    : (r.batavia_batting||[]));
+      const homePitch = r.home_pitching?.length  ? r.home_pitching  : (r.is_home ? (r.batavia_pitching||[]) : (r.opp_pitching||[]));
+      const awayPitch = r.away_pitching?.length  ? r.away_pitching  : (r.is_home ? (r.opp_pitching||[])   : (r.batavia_pitching||[]));
+      return {
+        gameId:          r.game_id,
+        date:            r.game_date?.toISOString?.().slice(0,10) || null,
+        homeTeam:        r.home_team  || '',
+        awayTeam:        r.away_team  || '',
+        homeScore:       r.home_score,
+        awayScore:       r.away_score,
+        opponent:        r.opponent   || '',
+        isHome:          r.is_home,
+        bataviaScore:    r.batavia_score,
+        oppScore:        r.opp_score,
+        result:          r.result     || '',
+        innings:         r.innings    || [],
+        homeBatting:     homeBat,
+        homePitching:    homePitch,
+        awayBatting:     awayBat,
+        awayPitching:    awayPitch,
+        bataviaBatting:  r.batavia_batting  || [],
+        bataviaPitching: r.batavia_pitching || [],
+        oppBatting:      r.opp_batting      || [],
+        oppPitching:     r.opp_pitching     || [],
+        wp:              r.wp || '',
+        lp:              r.lp || '',
+      };
+    });
 
     // Filter by player name if requested
     if (player) {
@@ -2255,19 +2426,17 @@ app.get('/api/query-stats', async (req, res) => {
     pitchers.sort(sortPit);
 
     // ── Filter by type ─────────────────────────────────────────────────────
+    // For player queries, include gameLog in the first match; strip it for leaderboard views
+    const mapBat  = (b, i) => player && i===0 ? b : (({ gameLog, ...rest }) => rest)(b);
+    const mapPit  = (p, i) => player && i===0 ? p : (({ gameLog, ...rest }) => rest)(p);
+
     const result = {
       gamesSearched: games.length,
       dateRange: { from: dateFrom||'all', to: dateTo||'today' },
       filters: { player: player||null, team: team||null, type: type||'all', lastN: lastN||null },
-      batters:  type === 'pitcher' ? [] : batters.slice(0, 30),
-      pitchers: type === 'batter'  ? [] : pitchers.slice(0, 30),
+      batters:  type === 'pitcher' ? [] : batters.slice(0, 30).map(mapBat),
+      pitchers: type === 'batter'  ? [] : pitchers.slice(0, 30).map(mapPit),
     };
-
-    // If player-specific, include game log
-    if (player) {
-      if (batters.length) result.batters[0].gameLog = batters[0]?.gameLog || [];
-      if (pitchers.length) result.pitchers[0].gameLog = pitchers[0]?.gameLog || [];
-    }
 
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2296,6 +2465,138 @@ app.get('/api/schedule', async (req, res) => {
       status:       r.status,
       opponent:     r.is_home ? r.away_team : r.home_team,
     })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Wipe + rescrape schedule ─────────────────────────────────────────────────
+// One-shot: delete non-Batavia entries + deduplicate abbreviated pitcher names
+app.get('/api/delete-pitchers', async (req, res) => {
+  if (!pg) return res.json({ error: 'DB unavailable' });
+  const names = ['Landen Burch','Brenden Hayes','Kannon VanDuzer','Larsen Burch','Brady Berdine','Carrick Ryan','Aiden Cowburn'];
+  const season = getSeason();
+  const r = await pg.query(
+    `DELETE FROM pitch_availability WHERE season=$1 AND pitcher_name = ANY($2) RETURNING pitcher_name`,
+    [season, names]
+  ).catch(e => ({ rows: [], error: e.message }));
+  res.json({ deleted: r.rows?.map(x=>x.pitcher_name) || [], error: r.error || null });
+});
+
+app.get('/api/cleanup-pitchers', async (req, res) => {
+  if (!pg) return res.json({ error: 'DB unavailable' });
+  try {
+    // 1. Delete non-Batavia from both tables
+    const r1 = await pg.query("DELETE FROM pitch_availability WHERE team != 'Batavia Muckdogs'");
+    const r2 = await pg.query("DELETE FROM pitch_avail WHERE team != 'Batavia Muckdogs'");
+
+    // 2. Remove abbreviated (single-initial) and reversed (Last, First) names from pitch_avail
+    //    These are scraper artifacts; the full-name canonical entries are in pitch_availability
+    const dupR = await pg.query(`
+      DELETE FROM pitch_avail
+      WHERE pitcher_name ~ '^[A-Z] [A-Z]'        -- "M Marsh", "C Ward" (initial + last name)
+         OR pitcher_name ~ '^[A-Za-z]+, [A-Z]'   -- "Thomas, Logan" (reversed)
+      RETURNING pitcher_name`);
+    const toDelete = dupR.rows.map(r => r.pitcher_name);
+
+    const { rows: remaining } = await pg.query("SELECT pitcher_name, team FROM pitch_avail");
+    const { rows: remaining2 } = await pg.query("SELECT pitcher_name, team FROM pitch_availability WHERE season=$1", [getSeason()]);
+    res.json({
+      deleted_pitch_avail_nonbatavia: r2.rowCount,
+      deleted_pitch_availability_nonbatavia: r1.rowCount,
+      deleted_abbreviated_dups: toDelete.length,
+      dup_names_removed: toDelete,
+      pitch_avail_remaining: remaining.map(r => r.pitcher_name),
+      pitch_availability_remaining: remaining2.map(r => r.pitcher_name),
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/rescrape-schedule', async (req, res) => {
+  if (!pg) return res.json({ error: 'DB unavailable' });
+  try {
+    const season = getSeason();
+    await pg.query('DELETE FROM schedule WHERE season=$1', [season]);
+    logScrape('Schedule wiped — rescraping...');
+    const br = await getBrowser().catch(() => null);
+    const games = await scrapeSchedule(season, br).catch(e => { logScrape('Rescrape error: '+e.message); return []; });
+    await closeBrowser().catch(() => {});
+    res.json({ success: true, games: games.length, message: `Schedule wiped and rescrapped: ${games.length} games` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Seed full Batavia 2026 schedule (GET so it's triggerable via curl) ───────
+app.get('/api/seed-schedule', async (req, res) => {
+  if (!pg) return res.json({ error: 'DB unavailable' });
+  try {
+    const season = getSeason();
+    const GAMES = [
+      // ── Completed games ────────────────────────────────────────────────
+      { id:'bat_20260529', date:'2026-05-29', time:'',       isHome:false, home:'Elmira Pioneers',           away:'Batavia Muckdogs',          loc:'Dunn Field, Elmira NY',                             bs:9,  os:6,  result:'W', status:'final'      },
+      { id:'bat_20260530', date:'2026-05-30', time:'',       isHome:true,  home:'Batavia Muckdogs',          away:'Elmira Pioneers',           loc:'Dwyer Stadium, Batavia NY',                         bs:12, os:1,  result:'W', status:'final'      },
+      { id:'bat_20260531', date:'2026-05-31', time:'',       isHome:true,  home:'Batavia Muckdogs',          away:'Olean Oilers',              loc:'Dwyer Stadium, Batavia NY',                         bs:7,  os:10, result:'L', status:'final'      },
+      { id:'bat_20260603', date:'2026-06-03', time:'',       isHome:true,  home:'Batavia Muckdogs',          away:'Jamestown Tarp Skunks',     loc:'Dwyer Stadium, Batavia NY',                         bs:6,  os:7,  result:'L', status:'final'      },
+      { id:'bat_20260605', date:'2026-06-05', time:'',       isHome:true,  home:'Batavia Muckdogs',          away:'Niagara Falls Americans',   loc:'Dwyer Stadium, Batavia NY',                         bs:5,  os:4,  result:'W', status:'final'      },
+      { id:'bat_20260606', date:'2026-06-06', time:'',       isHome:true,  home:'Batavia Muckdogs',          away:'Buffalo Diesel',            loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'exhibition' },
+      { id:'bat_20260607', date:'2026-06-07', time:'',       isHome:false, home:'Olean Oilers',              away:'Batavia Muckdogs',          loc:'Bradner Stadium, Olean NY',                         bs:11, os:1,  result:'W', status:'final'      },
+      { id:'bat_20260610', date:'2026-06-10', time:'',       isHome:false, home:'Olean Oilers',              away:'Batavia Muckdogs',          loc:'Bradner Stadium, Olean NY',                         bs:null,os:null,result:'',status:'final'      },
+      { id:'bat_20260611', date:'2026-06-11', time:'',       isHome:true,  home:'Batavia Muckdogs',          away:'Jamestown Tarp Skunks',     loc:'Dwyer Stadium, Batavia NY',                         bs:10, os:6,  result:'W', status:'final'      },
+      { id:'bat_20260612', date:'2026-06-12', time:'',       isHome:true,  home:'Batavia Muckdogs',          away:'Buffalo Diesel',            loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'exhibition' },
+      { id:'bat_20260613', date:'2026-06-13', time:'',       isHome:true,  home:'Batavia Muckdogs',          away:'Newark Pilots',             loc:'Dwyer Stadium, Batavia NY',                         bs:11, os:0,  result:'W', status:'final'      },
+      { id:'bat_20260614', date:'2026-06-14', time:'',       isHome:true,  home:'Batavia Muckdogs',          away:'Niagara Ironbacks',         loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'final'      },
+      // ── Upcoming games ─────────────────────────────────────────────────
+      { id:'bat_20260615', date:'2026-06-15', time:'6:30 PM',isHome:false, home:'Niagara Falls Americans',   away:'Batavia Muckdogs',          loc:'Sal Maglie Stadium, Niagara Falls NY',               bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260616', date:'2026-06-16', time:'6:30 PM',isHome:false, home:'Geneva Red Wings',          away:'Batavia Muckdogs',          loc:'McDonough Park, Geneva NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260617', date:'2026-06-17', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Auburn Doubledays',         loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260618', date:'2026-06-18', time:'6:30 PM',isHome:false, home:'Olean Oilers',              away:'Batavia Muckdogs',          loc:'Bradner Stadium, Olean NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260619', date:'2026-06-19', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Niagara Falls Americans',   loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260620', date:'2026-06-20', time:'6:30 PM',isHome:false, home:'Niagara Falls Americans',   away:'Batavia Muckdogs',          loc:'Sal Maglie Stadium, Niagara Falls NY',               bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260621', date:'2026-06-21', time:'4:05 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Olean Oilers',              loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260623', date:'2026-06-23', time:'6:30 PM',isHome:false, home:'Auburn Doubledays',         away:'Batavia Muckdogs',          loc:'Falcon Park, Auburn NY',                            bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260624', date:'2026-06-24', time:'6:30 PM',isHome:false, home:'Niagara Ironbacks',         away:'Batavia Muckdogs',          loc:'George Taylor Field, Niagara Falls ON',             bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260625', date:'2026-06-25', time:'6:30 PM',isHome:false, home:'Jamestown Tarp Skunks',     away:'Batavia Muckdogs',          loc:'Russell E. Diethrick Jr. Park, Jamestown NY',       bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260626', date:'2026-06-26', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Buffalo Diesel',            loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'exhibition'},
+      { id:'bat_20260627', date:'2026-06-27', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Niagara Ironbacks',         loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260628', date:'2026-06-28', time:'5:00 PM',isHome:false, home:'Newark Pilots',             away:'Batavia Muckdogs',          loc:'Colburn Park, Newark NY',                           bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260629', date:'2026-06-29', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Syracuse Salt Cats',        loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260630', date:'2026-06-30', time:'6:30 PM',isHome:false, home:'Niagara Ironbacks',         away:'Batavia Muckdogs',          loc:'George Taylor Field, Niagara Falls ON',             bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260701', date:'2026-07-01', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Jamestown Tarp Skunks',     loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260702', date:'2026-07-02', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Power City',                loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260703', date:'2026-07-03', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Elmira Pioneers',           loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260704', date:'2026-07-04', time:'6:30 PM',isHome:false, home:'Niagara Falls Americans',   away:'Batavia Muckdogs',          loc:'Sal Maglie Stadium, Niagara Falls NY',               bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260705', date:'2026-07-05', time:'4:05 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Buffalo Diesel',            loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'exhibition'},
+      { id:'bat_20260707', date:'2026-07-07', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Geneva Red Wings',          loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260708', date:'2026-07-08', time:'6:30 PM',isHome:false, home:'Geneva Red Wings',          away:'Batavia Muckdogs',          loc:'McDonough Park, Geneva NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260709', date:'2026-07-09', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Niagara Falls Americans',   loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260710', date:'2026-07-10', time:'6:30 PM',isHome:false, home:'Jamestown Tarp Skunks',     away:'Batavia Muckdogs',          loc:'Russell E. Diethrick Jr. Park, Jamestown NY',       bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260711', date:'2026-07-11', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Elmira Pioneers',           loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260712', date:'2026-07-12', time:'1:00 PM',isHome:false, home:'Niagara Ironbacks',         away:'Batavia Muckdogs',          loc:'George Taylor Field, Niagara Falls ON',             bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260713', date:'2026-07-13', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Jamestown Tarp Skunks',     loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260714', date:'2026-07-14', time:'6:30 PM',isHome:false, home:'Niagara Falls Americans',   away:'Batavia Muckdogs',          loc:'Sal Maglie Stadium, Niagara Falls NY',               bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260715', date:'2026-07-15', time:'6:30 PM',isHome:false, home:'Jamestown Tarp Skunks',     away:'Batavia Muckdogs',          loc:'Russell E. Diethrick Jr. Park, Jamestown NY',       bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260716', date:'2026-07-16', time:'6:30 PM',isHome:false, home:'Olean Oilers',              away:'Batavia Muckdogs',          loc:'Bradner Stadium, Olean NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260717', date:'2026-07-17', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Olean Oilers',              loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260718', date:'2026-07-18', time:'6:30 PM',isHome:false, home:'Elmira Pioneers',           away:'Batavia Muckdogs',          loc:'Dunn Field, Elmira NY',                             bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260719', date:'2026-07-19', time:'4:05 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Niagara Ironbacks',         loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260721', date:'2026-07-21', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Newark Pilots',             loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260722', date:'2026-07-22', time:'6:30 PM',isHome:false, home:'Auburn Doubledays',         away:'Batavia Muckdogs',          loc:'Falcon Park, Auburn NY',                            bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260723', date:'2026-07-23', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Auburn Doubledays',         loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260724', date:'2026-07-24', time:'6:30 PM',isHome:false, home:'Newark Pilots',             away:'Batavia Muckdogs',          loc:'Colburn Park, Newark NY',                           bs:null,os:null,result:'',status:'scheduled' },
+      { id:'bat_20260725', date:'2026-07-25', time:'6:30 PM',isHome:true,  home:'Batavia Muckdogs',          away:'Niagara Falls Americans',   loc:'Dwyer Stadium, Batavia NY',                         bs:null,os:null,result:'',status:'scheduled' },
+    ];
+    await pg.query('DELETE FROM schedule WHERE season=$1', [season]);
+    let saved = 0;
+    for (const g of GAMES) {
+      await pg.query(
+        `INSERT INTO schedule(season,game_id,game_date,game_time,home_team,away_team,location,batavia_score,opp_score,result,is_home,status,box_score_url,updated_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'',NOW())
+         ON CONFLICT(season,game_id) DO UPDATE SET
+           game_date=$3,game_time=$4,home_team=$5,away_team=$6,location=$7,
+           batavia_score=$8,opp_score=$9,result=$10,is_home=$11,status=$12,updated_at=NOW()`,
+        [season,g.id,g.date,g.time,g.home,g.away,g.loc,g.bs,g.os,g.result,g.isHome,g.status]
+      );
+      saved++;
+    }
+    logScrape(`Seed schedule: ${saved} games inserted`);
+    res.json({ success:true, inserted:saved, total:GAMES.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2481,6 +2782,12 @@ async function startup() {
 
   // Load Puppeteer module (async, non-blocking)
   loadPuppeteer().catch(() => {});
+
+  // Clean non-Batavia entries from both pitch tables (belt-and-suspenders, runs every startup)
+  if (pg) {
+    pg.query("DELETE FROM pitch_availability WHERE team != 'Batavia Muckdogs'").catch(() => {});
+    pg.query("DELETE FROM pitch_avail       WHERE team != 'Batavia Muckdogs'").catch(() => {});
+  }
 
   // Seed manually-collected rosters (ON CONFLICT DO UPDATE — safe to run every startup)
   setTimeout(() => seedManualRosters().catch(e => logScrape('Seed error: ' + e.message)), 2000);
