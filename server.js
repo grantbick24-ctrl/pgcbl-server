@@ -218,6 +218,18 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_gs_home_team ON game_stats(season, home_team, game_date);
       CREATE INDEX IF NOT EXISTS idx_gs_away_team ON game_stats(season, away_team, game_date);
     `).catch(() => {});
+    await pg.query(`
+      CREATE TABLE IF NOT EXISTS scrape_log (
+        id SERIAL PRIMARY KEY,
+        ts TIMESTAMPTZ DEFAULT NOW(),
+        trigger TEXT DEFAULT 'cron',
+        games_before INT DEFAULT 0,
+        games_after INT DEFAULT 0,
+        new_games INT DEFAULT 0,
+        success BOOLEAN DEFAULT true,
+        error TEXT DEFAULT ''
+      );
+    `).catch(() => {});
     console.log('PostgreSQL ready — all tables created');
     return true;
   } catch (e) {
@@ -228,6 +240,7 @@ async function initDB() {
 
 // ─── Scrape state ─────────────────────────────────────────────────────────────
 let isScraping = false;
+let scrapeStartedAt = null; // tracks when current scrape began; used to detect stuck runs
 let scrapeLog  = [];
 function logScrape(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -275,6 +288,20 @@ function cleanName(s) {
 }
 function pf(s) { const v = parseFloat(s); return isNaN(v) ? null : v; }
 function pi(s) { const v = parseInt(s);   return isNaN(v) ? null : v; }
+
+// Baseball IP: X.Y where Y is outs (0,1,2) — NOT decimal tenths
+// e.g. 3.2 IP = 3 full innings + 2 outs = 11 outs total
+function ipToOuts(ip) {
+  const full = Math.floor(ip);
+  const partial = Math.round((ip - full) * 10);
+  return full * 3 + Math.min(partial, 2);
+}
+function outsToIpStr(outs) {
+  return Math.floor(outs / 3) + '.' + (outs % 3);
+}
+function outsToRealInnings(outs) {
+  return outs / 3;
+}
 
 function parseHTMLTables(html) {
   const tables = [];
@@ -1473,12 +1500,45 @@ async function seedManualRosters() {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  FULL SCRAPE ORCHESTRATOR
 // ═══════════════════════════════════════════════════════════════════════════════
-async function runFullScrape() {
+async function countBataviaGames(season) {
+  if (!pg) return 0;
+  try {
+    const { rows } = await pg.query(
+      `SELECT COUNT(*) AS c FROM game_stats WHERE season=$1 AND (home_team='Batavia Muckdogs' OR away_team='Batavia Muckdogs')`,
+      [season]
+    );
+    return parseInt(rows[0]?.c || 0);
+  } catch { return 0; }
+}
+
+async function writeScrapeLog(trigger, gamesBefore, gamesAfter, success, error) {
+  if (!pg) return;
+  const newGames = Math.max(0, gamesAfter - gamesBefore);
+  await pg.query(
+    `INSERT INTO scrape_log(ts,trigger,games_before,games_after,new_games,success,error) VALUES(NOW(),$1,$2,$3,$4,$5,$6)`,
+    [trigger, gamesBefore, gamesAfter, newGames, success, error || '']
+  ).catch(() => {});
+  logScrape(`── Health: ${newGames} new game(s) written (${gamesBefore}→${gamesAfter}) | trigger=${trigger} | success=${success}${error ? ' | err='+error : ''}`);
+}
+
+const SCRAPE_TIMEOUT_MS = 12 * 60 * 1000; // 12 minutes — if exceeded, scrape is killed and isScraping reset
+
+async function runFullScrape(trigger = 'cron') {
   if (isScraping) { logScrape('Scrape already running — skipped'); return; }
   isScraping = true;
-  logScrape('═══ Starting full scrape ═══');
+  scrapeStartedAt = Date.now();
+  logScrape(`═══ Starting full scrape [${trigger}] ═══`);
   const season = getSeason();
   let br = null;
+  const gamesBefore = await countBataviaGames(season);
+
+  // Hard timeout: if scrape takes longer than SCRAPE_TIMEOUT_MS, force-reset isScraping
+  const timeoutHandle = setTimeout(() => {
+    logScrape(`[timeout] Scrape exceeded ${SCRAPE_TIMEOUT_MS/60000}min — force-resetting isScraping`);
+    isScraping = false;
+    scrapeStartedAt = null;
+    closeBrowser().catch(() => {});
+  }, SCRAPE_TIMEOUT_MS);
 
   try {
     br = await getBrowser(); // may be null if Puppeteer unavailable
@@ -1501,21 +1561,26 @@ async function runFullScrape() {
     await scrapeBoxScores(season, br).catch(e => logScrape('Box score scrape error (non-fatal): ' + e.message));
     await scrapeGameStats(season, br).catch(e => logScrape('Game stats scrape error (non-fatal): ' + e.message));
 
+    const gamesAfter = await countBataviaGames(season);
+    await writeScrapeLog(trigger, gamesBefore, gamesAfter, true, '');
     logScrape('═══ Scrape complete ═══');
   } catch (e) {
     logScrape('═══ Scrape failed: ' + e.message + ' ═══');
     await setMetaValue('last_scrape_error', e.message).catch(() => {});
+    const gamesAfter = await countBataviaGames(season);
+    await writeScrapeLog(trigger, gamesBefore, gamesAfter, false, e.message);
   } finally {
-    // Close browser after each scrape to free memory
+    clearTimeout(timeoutHandle);
     await closeBrowser();
     isScraping = false;
+    scrapeStartedAt = null;
   }
 }
 
 // ─── Scrape every 3 hours — Railway may sleep between runs so 6am-only is unreliable ──
 cron.schedule('0 */3 * * *', () => {
   logScrape('3h cron triggered');
-  runFullScrape().catch(e => logScrape('Cron error: ' + e.message));
+  runFullScrape('cron').catch(e => logScrape('Cron error: ' + e.message));
 }, { timezone: 'America/New_York' });
 
 // ─── Self-ping every 5 minutes to keep the Railway process alive ─────────────
@@ -1523,20 +1588,126 @@ const SELF_PORT = process.env.PORT || 8080;
 const SELF_URL  = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/api/health`
   : `http://localhost:${SELF_PORT}/api/health`;
-setInterval(() => {
-  fetch(SELF_URL)
-    .then(() => {})  // fire-and-forget — just keeps the process alive
-    .catch(() => {}); // ignore errors (startup race, etc.)
+let selfPingFailures = 0;
+setInterval(async () => {
+  try {
+    await fetch(SELF_URL, { signal: AbortSignal.timeout(10000) });
+    selfPingFailures = 0;
+  } catch (e) {
+    selfPingFailures++;
+    if (selfPingFailures >= 3) logScrape(`[keep-alive] WARNING: ${selfPingFailures} consecutive self-ping failures — ${e.message}`);
+  }
 }, 5 * 60 * 1000);
+
+// ─── Watchdog: detect stuck scrapes and auto-retry if data is stale ───────────
+setInterval(async () => {
+  // If scrape has been running longer than the hard timeout, it's stuck — force-reset
+  if (isScraping && scrapeStartedAt && (Date.now() - scrapeStartedAt) > SCRAPE_TIMEOUT_MS) {
+    logScrape(`[watchdog] Scrape stuck for ${((Date.now()-scrapeStartedAt)/60000).toFixed(1)}min — force-resetting isScraping`);
+    isScraping = false;
+    scrapeStartedAt = null;
+    closeBrowser().catch(() => {});
+  }
+
+  if (isScraping) return; // genuinely in progress — leave it alone
+
+  try {
+    const last = await getMetaValue('last_scrape');
+    if (!last) return;
+    const ageHours = (Date.now() - new Date(last).getTime()) / 3600000;
+    if (ageHours > 6) {
+      logScrape(`[watchdog] Last scrape ${ageHours.toFixed(1)}h ago — triggering auto-retry`);
+      runFullScrape('watchdog').catch(e => logScrape('[watchdog] Auto-retry error: ' + e.message));
+    }
+  } catch (e) {
+    logScrape('[watchdog] Error: ' + e.message);
+  }
+}, 30 * 60 * 1000); // check every 30 minutes
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  DB → API ASSEMBLER
 // ═══════════════════════════════════════════════════════════════════════════════
+// Compute pitcher stats live from raw game_stats box score data with correct baseball IP math
+async function computeLiveStats(season) {
+  if (!pg) return { pitchers: [], leagueAvg: null };
+
+  const { rows: games } = await pg.query(
+    `SELECT game_date, home_team, away_team, home_pitching, away_pitching
+     FROM game_stats WHERE season=$1 AND game_date IS NOT NULL ORDER BY game_date ASC`,
+    [season]
+  ).catch(() => ({ rows: [] }));
+
+  const pitcherMap = {}; // key: normalizedName|team
+
+  for (const g of games) {
+    const sides = [
+      { arr: g.home_pitching || [], teamName: g.home_team || '' },
+      { arr: g.away_pitching || [], teamName: g.away_team || '' },
+    ];
+    for (const { arr, teamName } of sides) {
+      for (const p of arr) {
+        if (!p.name || !p.ip) continue;
+        // Normalize name: trim and collapse spaces
+        const normName = String(p.name).trim().replace(/\s+/g, ' ');
+        const key = `${normName.toLowerCase()}|${teamName}`;
+        if (!pitcherMap[key]) {
+          pitcherMap[key] = { name: normName, team: teamName, games: 0, outs: 0, h: 0, er: 0, bb: 0, k: 0, np: 0 };
+        }
+        const pm = pitcherMap[key];
+        pm.games++;
+        pm.outs += ipToOuts(parseFloat(p.ip) || 0);
+        pm.h    += parseInt(p.h)  || 0;
+        pm.er   += parseInt(p.er) || 0;
+        pm.bb   += parseInt(p.bb) || 0;
+        pm.k    += parseInt(p.k)  || 0;
+        pm.np   += parseInt(p.np) || 0;
+      }
+    }
+  }
+
+  const pitchers = Object.values(pitcherMap).map(p => {
+    const realIp = outsToRealInnings(p.outs);
+    return {
+      name:  p.name,
+      team:  p.team,
+      games: p.games,
+      ip:    parseFloat(outsToIpStr(p.outs)),
+      h:     p.h,
+      er:    p.er,
+      bb:    p.bb,
+      k:     p.k,
+      np:    p.np,
+      era:   realIp > 0 ? parseFloat(((p.er / realIp) * 9).toFixed(2)) : 0,
+      whip:  realIp > 0 ? parseFloat(((p.bb + p.h) / realIp).toFixed(3)) : 0,
+      k9:    realIp > 0 ? parseFloat(((p.k  / realIp) * 9).toFixed(2))  : 0,
+    };
+  }).filter(p => p.ip >= 0.1);
+
+  pitchers.sort((a, b) => a.era - b.era);
+
+  // Compute league-wide averages from all pitchers with at least 1 IP
+  const qualifiers = pitchers.filter(p => p.ip >= 1);
+  const totalOuts = qualifiers.reduce((s, p) => s + ipToOuts(p.ip), 0);
+  const totalRealIp = outsToRealInnings(totalOuts);
+  const totalEr = qualifiers.reduce((s, p) => s + p.er, 0);
+  const totalBb = qualifiers.reduce((s, p) => s + p.bb, 0);
+  const totalH  = qualifiers.reduce((s, p) => s + p.h, 0);
+  const totalK  = qualifiers.reduce((s, p) => s + p.k, 0);
+
+  const leagueAvg = totalRealIp > 0 ? {
+    era:  parseFloat(((totalEr / totalRealIp) * 9).toFixed(2)),
+    whip: parseFloat(((totalBb + totalH) / totalRealIp).toFixed(3)),
+    k9:   parseFloat(((totalK  / totalRealIp) * 9).toFixed(2)),
+  } : null;
+
+  return { pitchers, leagueAvg };
+}
+
 async function assembleStats() {
   if (!pg) return null;
   const season = getSeason();
 
-  const [standR, hitR, pitR, pavR, rostR, lastScrape, scrapeErr] = await Promise.all([
+  const [standR, hitR, pitR, pavR, rostR, lastScrape, scrapeErr, liveStats] = await Promise.all([
     pg.query('SELECT * FROM standings  WHERE season=$1 ORDER BY rank', [season]),
     pg.query('SELECT * FROM hitter_stats  WHERE season=$1 AND ab >= 1 ORDER BY avg DESC', [season]),
     pg.query('SELECT * FROM pitcher_stats WHERE season=$1 AND ip >= 0.1 ORDER BY era ASC', [season]),
@@ -1544,6 +1715,7 @@ async function assembleStats() {
     pg.query('SELECT team, player_name, number, position, player_year FROM rosters WHERE season=$1 ORDER BY team, CAST(NULLIF(regexp_replace(number,\'[^0-9]\',\'\',\'g\'),\'\') AS INTEGER) NULLS LAST, player_name', [season]),
     getMetaValue('last_scrape'),
     getMetaValue('last_scrape_error'),
+    computeLiveStats(season),
   ]);
 
   // Build roster number lookup: { team: { lastName: number } }
@@ -1570,13 +1742,31 @@ async function assembleStats() {
     number: getNum(r.name, r.team),
   }));
 
-  const pitchers = pitR.rows.map(r => ({
-    name: r.name, team: r.team, gp: r.app, ip: +r.ip, era: +r.era,
-    whip: +r.whip, k: r.k, bb: r.bb, h: r.h, w: r.w, sv: r.sv,
-    k9: +r.k9,
-    bb9: r.ip > 0 ? parseFloat((r.bb / r.ip * 9).toFixed(2)) : 0,
-    number: getNum(r.name, r.team),
-  }));
+  // Build a live-data lookup for Batavia pitchers keyed by normalized name
+  const batLiveMap = {};
+  for (const p of liveStats.pitchers) {
+    if (/batavia/i.test(p.team)) batLiveMap[p.name.toLowerCase()] = p;
+  }
+
+  const pitchers = pitR.rows.map(r => {
+    // For Batavia pitchers, prefer live-computed stats from game_stats (correct IP math, no cache)
+    const live = /batavia/i.test(r.team) ? batLiveMap[r.name.toLowerCase()] : null;
+    const base = live || r;
+    const ip   = live ? live.ip   : +r.ip;
+    const era  = live ? live.era  : +r.era;
+    const whip = live ? live.whip : +r.whip;
+    const k9   = live ? live.k9   : +r.k9;
+    const realIp = live ? outsToRealInnings(ipToOuts(ip)) : (+r.ip);
+    return {
+      name: r.name, team: r.team, gp: live ? live.games : r.app,
+      ip, era, whip, k9,
+      k: live ? live.k : r.k, bb: live ? live.bb : r.bb,
+      h: live ? live.h : r.h, w: r.w, sv: r.sv,
+      bb9: realIp > 0 ? parseFloat(((live ? live.bb : r.bb) / realIp * 9).toFixed(2)) : 0,
+      number: getNum(r.name, r.team),
+      isLive: !!live,
+    };
+  });
 
   // Pitch counts from DB (most recent outing per Batavia pitcher)
   const pitchCounts = {};
@@ -1625,8 +1815,11 @@ async function assembleStats() {
     rosters,
     pitchCounts,
     season,
-    laWhip:     1.37,
-    laK9:       8.21,
+    laEra:      liveStats.leagueAvg?.era  ?? null,
+    laWhip:     liveStats.leagueAvg?.whip ?? 1.37,
+    laK9:       liveStats.leagueAvg?.k9   ?? 8.21,
+    leagueAvg:  liveStats.leagueAvg,
+    bataviaPitchersLive: liveStats.pitchers.filter(p => /batavia/i.test(p.team)),
     updatedAt,
     isStale:    staleHours > 24,
     lastScrapeError: scrapeErr || null,
@@ -1667,16 +1860,22 @@ app.get('/api/spotify-token', async (req, res) => {
 });
 
 app.get('/api/health', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
   const lastScrape = await getMetaValue('last_scrape');
   const lastError  = await getMetaValue('last_scrape_error');
+  const staleHours = lastScrape ? (Date.now() - new Date(lastScrape).getTime()) / 3600000 : 999;
+  const scrapeRunningMins = isScraping && scrapeStartedAt ? parseFloat(((Date.now()-scrapeStartedAt)/60000).toFixed(1)) : null;
   res.json({
     status:  'PGCBL Stats Server v3 — Puppeteer + PostgreSQL',
     season:  getSeason(),
     db:      !!pg,
     isScraping,
+    scrapeRunningMins,
     lastScrape,
     lastScrapeError: lastError || null,
     puppeteer: puppeteerAvailable,
+    isStale: staleHours > 6,
+    staleHours: parseFloat(staleHours.toFixed(1)),
   });
 });
 
@@ -1692,7 +1891,7 @@ app.get('/api/stats', async (req, res) => {
 
 app.post('/api/refresh', async (req, res) => {
   if (isScraping) return res.json({ success: false, message: 'Scrape already in progress', isScraping: true });
-  setImmediate(() => runFullScrape().catch(e => logScrape('Manual refresh error: ' + e.message)));
+  setImmediate(() => runFullScrape('manual').catch(e => logScrape('Manual refresh error: ' + e.message)));
   res.json({ success: true, message: 'Scrape started — check /api/health for status' });
 });
 
@@ -1715,8 +1914,18 @@ app.post('/api/seed-rosters', async (req, res) => {
   }
 });
 
-app.get('/api/scrape-log', (req, res) => {
-  res.json({ log: scrapeLog.slice(-100) });
+app.get('/api/scrape-log', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  const textLog = scrapeLog.slice(-100);
+  if (!pg) return res.json({ log: textLog, history: [] });
+  try {
+    const { rows } = await pg.query(
+      `SELECT id, ts, trigger, games_before, games_after, new_games, success, error FROM scrape_log ORDER BY ts DESC LIMIT 50`
+    );
+    res.json({ log: textLog, history: rows });
+  } catch (e) {
+    res.json({ log: textLog, history: [], error: e.message });
+  }
 });
 
 // Rosters endpoint
@@ -2381,11 +2590,12 @@ app.get('/api/query-stats', async (req, res) => {
           if (player && !p.name.toLowerCase().includes(player.toLowerCase())) continue;
           if (team && !teamName.toLowerCase().includes(team.toLowerCase())) continue;
           const key = `${p.name}|${teamName}`;
-          if (!pitcherMap[key]) pitcherMap[key] = { name: p.name, team: teamName, games:0, ip:0, h:0, r:0, er:0, bb:0, k:0, np:0, bf:0, gameLog:[] };
+          if (!pitcherMap[key]) pitcherMap[key] = { name: p.name, team: teamName, games:0, outs:0, h:0, r:0, er:0, bb:0, k:0, np:0, bf:0, gameLog:[] };
           const pt = pitcherMap[key];
-          pt.games++; pt.ip+=pf2(p.ip); pt.h+=pi2(p.h); pt.r+=pi2(p.r);
+          const gameIp = pf2(p.ip);
+          pt.games++; pt.outs+=ipToOuts(gameIp); pt.h+=pi2(p.h); pt.r+=pi2(p.r);
           pt.er+=pi2(p.er); pt.bb+=pi2(p.bb); pt.k+=pi2(p.k); pt.np+=pi2(p.np); pt.bf+=pi2(p.bf);
-          pt.gameLog.push({ date: gDate, opp, ip:pf2(p.ip), er:pi2(p.er), k:pi2(p.k), np:pi2(p.np), bb:pi2(p.bb) });
+          pt.gameLog.push({ date: gDate, opp, ip:gameIp, er:pi2(p.er), k:pi2(p.k), np:pi2(p.np), bb:pi2(p.bb) });
         }
       }
     }
@@ -2397,13 +2607,18 @@ app.get('/api/query-stats', async (req, res) => {
       obp: (b.ab+b.bb+b.hbp) > 0 ? ((b.h+b.bb+b.hbp)/(b.ab+b.bb+b.hbp+b.sf)).toFixed(3) : '.000',
       slg: b.ab > 0 ? ((b.h+b.hr)/b.ab).toFixed(3) : '.000', // approx (no 2B/3B data)
     }));
-    const pitchers = Object.values(pitcherMap).map(p => ({
-      ...p,
-      ipFmt: Math.floor(p.ip) + '.' + Math.round((p.ip - Math.floor(p.ip))*3),
-      era: p.ip > 0 ? ((p.er / p.ip) * 9).toFixed(2) : '-.--',
-      whip: p.ip > 0 ? ((p.bb + p.h) / p.ip).toFixed(2) : '-.--',
-      kPer9: p.ip > 0 ? ((p.k / p.ip) * 9).toFixed(1) : '0.0',
-    }));
+    const pitchers = Object.values(pitcherMap).map(p => {
+      const ipStr = outsToIpStr(p.outs);
+      const realIp = outsToRealInnings(p.outs);
+      return {
+        ...p,
+        ip: parseFloat(ipStr),
+        ipFmt: ipStr,
+        era:   realIp > 0 ? ((p.er / realIp) * 9).toFixed(2) : '-.--',
+        whip:  realIp > 0 ? ((p.bb + p.h) / realIp).toFixed(2) : '-.--',
+        kPer9: realIp > 0 ? ((p.k  / realIp) * 9).toFixed(1)  : '0.0',
+      };
+    });
 
     // Sort by requested stat or default
     const sortBat = (a, b) => {
