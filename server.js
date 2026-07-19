@@ -289,6 +289,18 @@ function cleanName(s) {
 function pf(s) { const v = parseFloat(s); return isNaN(v) ? null : v; }
 function pi(s) { const v = parseInt(s);   return isNaN(v) ? null : v; }
 
+// Known name misspellings in PrestoSports box scores → canonical full name
+// Add entries here whenever a pitcher shows up with two different spellings
+const PITCHER_NAME_ALIASES = {
+  'eric woodly':    'Eric Woodley',
+  'e woodly':       'Eric Woodley',
+  'e woodley':      'Eric Woodley',
+};
+function canonicalizePitcherName(name) {
+  const lower = (name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  return PITCHER_NAME_ALIASES[lower] || name.trim().replace(/\s+/g, ' ');
+}
+
 // Baseball IP: X.Y where Y is outs (0,1,2) — NOT decimal tenths
 // e.g. 3.2 IP = 3 full innings + 2 outs = 11 outs total
 function ipToOuts(ip) {
@@ -1647,8 +1659,8 @@ async function computeLiveStats(season) {
     for (const { arr, teamName } of sides) {
       for (const p of arr) {
         if (!p.name || !p.ip) continue;
-        // Normalize name: trim and collapse spaces
-        const normName = String(p.name).trim().replace(/\s+/g, ' ');
+        // Normalize name: trim, collapse spaces, apply known alias table
+        const normName = canonicalizePitcherName(String(p.name));
         const key = `${normName.toLowerCase()}|${teamName}`;
         if (!pitcherMap[key]) {
           pitcherMap[key] = { name: normName, team: teamName, games: 0, outs: 0, h: 0, er: 0, bb: 0, k: 0, np: 0 };
@@ -1745,12 +1757,27 @@ async function assembleStats() {
   // Build a live-data lookup for Batavia pitchers keyed by normalized name
   const batLiveMap = {};
   for (const p of liveStats.pitchers) {
-    if (/batavia/i.test(p.team)) batLiveMap[p.name.toLowerCase()] = p;
+    if (/batavia/i.test(p.team)) {
+      batLiveMap[p.name.toLowerCase()] = p;
+      batLiveMap[canonicalizePitcherName(p.name).toLowerCase()] = p;
+    }
   }
 
-  const pitchers = pitR.rows.map(r => {
+  // Deduplicate pitcher_stats rows for Batavia — aliases (e.g. "E Woodly" + "E Woodley") become one entry
+  const seenBataviaNames = new Set();
+  const deduped = pitR.rows.filter(r => {
+    if (!/batavia/i.test(r.team)) return true;
+    const canonical = canonicalizePitcherName(r.name).toLowerCase();
+    if (seenBataviaNames.has(canonical)) return false;
+    seenBataviaNames.add(canonical);
+    return true;
+  });
+
+  const pitchers = deduped.map(r => {
     // For Batavia pitchers, prefer live-computed stats from game_stats (correct IP math, no cache)
-    const live = /batavia/i.test(r.team) ? batLiveMap[r.name.toLowerCase()] : null;
+    const live = /batavia/i.test(r.team)
+      ? (batLiveMap[r.name.toLowerCase()] || batLiveMap[canonicalizePitcherName(r.name).toLowerCase()])
+      : null;
     const base = live || r;
     const ip   = live ? live.ip   : +r.ip;
     const era  = live ? live.era  : +r.era;
