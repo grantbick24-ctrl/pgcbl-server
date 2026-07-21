@@ -171,7 +171,48 @@ async function initDB() {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS charting_sessions (
+        id SERIAL PRIMARY KEY,
+        season TEXT NOT NULL,
+        game_id TEXT,
+        game_date DATE NOT NULL,
+        opponent TEXT DEFAULT '',
+        home_away TEXT DEFAULT '',
+        session_type TEXT DEFAULT 'game',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS pitches (
+        id SERIAL PRIMARY KEY,
+        client_id TEXT UNIQUE NOT NULL,
+        session_id INTEGER REFERENCES charting_sessions(id),
+        season TEXT NOT NULL,
+        pitcher_name TEXT NOT NULL, pitcher_team TEXT NOT NULL,
+        batter_name  TEXT NOT NULL, batter_team  TEXT NOT NULL,
+        inning INTEGER, half TEXT, balls INTEGER, strikes INTEGER, outs INTEGER,
+        pitch_type TEXT,
+        velo NUMERIC(4,1),
+        zone_x NUMERIC(4,3), zone_y NUMERIC(4,3),
+        result TEXT NOT NULL,
+        batted_ball_type TEXT,
+        in_play_outcome TEXT,
+        spray_x NUMERIC(4,3), spray_y NUMERIC(4,3),
+        ts TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS pitcher_repertoire (
+        season TEXT, team TEXT, player_name TEXT,
+        pitch_types JSONB DEFAULT '["FB","SI","CH","CB","SL","CT"]',
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (season, team, player_name)
+      );
     `);
+    await pg.query(`
+      CREATE INDEX IF NOT EXISTS idx_pitches_pitcher ON pitches(season, pitcher_team, pitcher_name);
+      CREATE INDEX IF NOT EXISTS idx_pitches_batter  ON pitches(season, batter_team, batter_name);
+      CREATE INDEX IF NOT EXISTS idx_pitches_matchup ON pitches(pitcher_name, pitcher_team, batter_name, batter_team);
+      CREATE INDEX IF NOT EXISTS idx_pitches_session ON pitches(session_id);
+    `).catch(() => {});
     await pg.query(`
       CREATE INDEX IF NOT EXISTS idx_gsr_opponent ON game_scouting_reports(season, opponent);
       CREATE INDEX IF NOT EXISTS idx_gsr_player   ON game_scouting_reports(season, player_name);
@@ -212,6 +253,7 @@ async function initDB() {
       ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS away_batting JSONB DEFAULT '[]';
       ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS home_pitching JSONB DEFAULT '[]';
       ALTER TABLE game_stats ADD COLUMN IF NOT EXISTS away_pitching JSONB DEFAULT '[]';
+      ALTER TABLE pitches ADD COLUMN IF NOT EXISTS in_play_outcome TEXT;
     `).catch(e => console.warn('Migration warning:', e.message));
     // Index for querying by team and date across all West Division games
     await pg.query(`
@@ -1967,6 +2009,260 @@ app.get('/api/rosters', async (req, res) => {
       result[r.team].push({ name: r.player_name, number: r.number, position: r.position, year: r.player_year, hometown: r.hometown });
     });
     res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Pitch charting ───────────────────────────────────────────────────────────
+app.post('/api/charting-sessions', async (req, res) => {
+  if (!pg) return res.status(503).json({ error: 'DB unavailable' });
+  const season = getSeason();
+  let { gameId = null, date, opponent = '', homeAway = '', type = 'game' } = req.body;
+  try {
+    if (gameId) {
+      const sched = await pg.query('SELECT * FROM schedule WHERE season=$1 AND game_id=$2', [season, gameId]);
+      if (sched.rows[0]) {
+        const s = sched.rows[0];
+        date     = s.game_date?.toISOString?.().slice(0,10) || date;
+        opponent = s.is_home ? s.away_team : s.home_team;
+        homeAway = s.is_home ? 'home' : 'away';
+      }
+      const existing = await pg.query('SELECT id FROM charting_sessions WHERE season=$1 AND game_id=$2', [season, gameId]);
+      if (existing.rows[0]) return res.json({ id: existing.rows[0].id });
+    } else {
+      const existing = await pg.query(
+        'SELECT id FROM charting_sessions WHERE season=$1 AND game_date=$2 AND opponent=$3 AND session_type=$4 AND game_id IS NULL',
+        [season, date, opponent, type]
+      );
+      if (existing.rows[0]) return res.json({ id: existing.rows[0].id });
+    }
+    const { rows } = await pg.query(
+      `INSERT INTO charting_sessions(season, game_id, game_date, opponent, home_away, session_type)
+       VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [season, gameId, date, opponent, homeAway, type]
+    );
+    res.json({ id: rows[0].id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/charting-sessions', async (req, res) => {
+  if (!pg) return res.json([]);
+  const season = req.query.season || getSeason();
+  try {
+    const { rows } = await pg.query(
+      'SELECT * FROM charting_sessions WHERE season=$1 ORDER BY created_at DESC LIMIT 20',
+      [season]
+    );
+    res.json(rows.map(r => ({
+      id: r.id, gameId: r.game_id, date: r.game_date?.toISOString?.().slice(0,10) || null,
+      opponent: r.opponent, homeAway: r.home_away, type: r.session_type,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/charting-sessions/:id/pitches', async (req, res) => {
+  if (!pg) return res.json({ session: null, pitches: [] });
+  const id = req.params.id;
+  try {
+    const sessRes = await pg.query('SELECT * FROM charting_sessions WHERE id=$1', [id]);
+    if (!sessRes.rows[0]) return res.status(404).json({ error: 'Session not found' });
+    const s = sessRes.rows[0];
+    const { rows } = await pg.query('SELECT * FROM pitches WHERE session_id=$1 ORDER BY ts ASC', [id]);
+    res.json({
+      session: {
+        id: s.id, gameId: s.game_id, date: s.game_date?.toISOString?.().slice(0,10) || null,
+        opponent: s.opponent, homeAway: s.home_away, type: s.session_type,
+      },
+      pitches: rows.map(r => ({
+        id: r.id, pitcherName: r.pitcher_name, pitcherTeam: r.pitcher_team,
+        batterName: r.batter_name, batterTeam: r.batter_team,
+        inning: r.inning, half: r.half, balls: r.balls, strikes: r.strikes, outs: r.outs,
+        pitchType: r.pitch_type, velo: r.velo != null ? Number(r.velo) : null,
+        zoneX: r.zone_x != null ? Number(r.zone_x) : null, zoneY: r.zone_y != null ? Number(r.zone_y) : null,
+        result: r.result, battedBallType: r.batted_ball_type, inPlayOutcome: r.in_play_outcome,
+        sprayX: r.spray_x != null ? Number(r.spray_x) : null, sprayY: r.spray_y != null ? Number(r.spray_y) : null,
+        ts: r.ts,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/repertoire/:team/:name', async (req, res) => {
+  if (!pg) return res.json({ pitchTypes: ['FB','SI','CH','CB','SL','CT'] });
+  const team = decodeURIComponent(req.params.team), name = decodeURIComponent(req.params.name);
+  const season = req.query.season || getSeason();
+  try {
+    const { rows } = await pg.query(
+      'SELECT pitch_types FROM pitcher_repertoire WHERE season=$1 AND team=$2 AND player_name=$3',
+      [season, team, name]
+    );
+    res.json({ pitchTypes: rows[0]?.pitch_types || ['FB','SI','CH','CB','SL','CT'] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/repertoire/:team/:name', async (req, res) => {
+  if (!pg) return res.json({ success: true, storage: 'none' });
+  const team = decodeURIComponent(req.params.team), name = decodeURIComponent(req.params.name);
+  const season = req.query.season || getSeason();
+  const { pitchTypes = [] } = req.body;
+  try {
+    await pg.query(
+      `INSERT INTO pitcher_repertoire(season,team,player_name,pitch_types,updated_at)
+       VALUES($1,$2,$3,$4,NOW())
+       ON CONFLICT(season,team,player_name) DO UPDATE SET pitch_types=$4, updated_at=NOW()`,
+      [season, team, name, JSON.stringify(pitchTypes)]
+    );
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/pitches', async (req, res) => {
+  if (!pg) return res.status(503).json({ error: 'DB unavailable' });
+  const { pitches = [] } = req.body;
+  if (!Array.isArray(pitches) || !pitches.length) return res.json({ inserted: 0, skipped: 0 });
+  let inserted = 0, skipped = 0;
+  try {
+    for (const p of pitches) {
+      const { rowCount } = await pg.query(
+        `INSERT INTO pitches(
+           client_id, session_id, season, pitcher_name, pitcher_team, batter_name, batter_team,
+           inning, half, balls, strikes, outs, pitch_type, velo, zone_x, zone_y,
+           result, batted_ball_type, in_play_outcome, spray_x, spray_y, ts
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+         ON CONFLICT (client_id) DO NOTHING`,
+        [
+          p.clientId, p.sessionId || null, p.season || getSeason(), p.pitcherName, p.pitcherTeam,
+          p.batterName, p.batterTeam, p.inning || null, p.half || null, p.balls ?? null,
+          p.strikes ?? null, p.outs ?? null, p.pitchType || null, p.velo || null,
+          p.zoneX ?? null, p.zoneY ?? null, p.result, p.battedBallType || null, p.inPlayOutcome || null,
+          p.sprayX ?? null, p.sprayY ?? null, p.ts || new Date().toISOString(),
+        ]
+      );
+      if (rowCount) inserted++; else skipped++;
+    }
+    res.json({ inserted, skipped });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/players/:team/:name/pitch-data', async (req, res) => {
+  if (!pg) return res.json({});
+  const team = decodeURIComponent(req.params.team), name = decodeURIComponent(req.params.name);
+  const season = req.query.season || getSeason();
+  try {
+    const { rows } = await pg.query(
+      `SELECT pitch_type, velo, balls, strikes, result, zone_x, zone_y, ts
+       FROM pitches WHERE season=$1 AND pitcher_team=$2 AND pitcher_name=$3`,
+      [season, team, name]
+    );
+    const total = rows.length;
+    const byType = {};
+    for (const r of rows) {
+      const t = r.pitch_type || 'UNK';
+      if (!byType[t]) byType[t] = { count: 0, veloSum: 0, veloN: 0 };
+      byType[t].count++;
+      if (r.velo != null) { byType[t].veloSum += Number(r.velo); byType[t].veloN++; }
+    }
+    const usage = Object.entries(byType).map(([type, v]) => ({
+      pitchType: type, count: v.count, usagePct: total ? +(v.count / total * 100).toFixed(1) : 0,
+      avgVelo: v.veloN ? +(v.veloSum / v.veloN).toFixed(1) : null,
+    }));
+
+    const trendMap = {};
+    for (const r of rows) {
+      if (r.velo == null) continue;
+      const day = new Date(r.ts).toISOString().slice(0,10);
+      const key = day + '|' + (r.pitch_type || 'UNK');
+      if (!trendMap[key]) trendMap[key] = { date: day, pitchType: r.pitch_type || 'UNK', sum: 0, n: 0 };
+      trendMap[key].sum += Number(r.velo); trendMap[key].n++;
+    }
+    const veloTrend = Object.values(trendMap).map(v => ({ date: v.date, pitchType: v.pitchType, avgVelo: +(v.sum/v.n).toFixed(1) })).sort((a,b)=>a.date.localeCompare(b.date));
+
+    const firstPitch = rows.filter(r => r.balls === 0 && r.strikes === 0);
+    const fpStrikes = firstPitch.filter(r => r.result !== 'ball');
+    const firstPitchStrikePct = firstPitch.length ? +(fpStrikes.length / firstPitch.length * 100).toFixed(1) : null;
+
+    const putAwayRows = rows.filter(r => r.strikes === 2 && (r.result === 'swinging_strike' || r.result === 'called_strike'));
+    const putAwayByType = {};
+    for (const r of putAwayRows) { const t = r.pitch_type || 'UNK'; putAwayByType[t] = (putAwayByType[t]||0) + 1; }
+    const putAway = Object.entries(putAwayByType)
+      .map(([type, count]) => ({ pitchType: type, count, pct: putAwayRows.length ? +(count/putAwayRows.length*100).toFixed(1) : 0 }))
+      .sort((a,b) => b.count - a.count);
+
+    const zoneGrid = {};
+    for (const r of rows) {
+      if (r.zone_x == null || r.zone_y == null) continue;
+      const gx = Math.min(2, Math.max(0, Math.floor(Number(r.zone_x) * 3)));
+      const gy = Math.min(2, Math.max(0, Math.floor(Number(r.zone_y) * 3)));
+      const key = gx + ',' + gy;
+      zoneGrid[key] = (zoneGrid[key]||0) + 1;
+    }
+    const zoneHeatmap = Object.entries(zoneGrid).map(([k,count]) => { const [gx,gy]=k.split(',').map(Number); return { gx, gy, count }; });
+
+    res.json({ totalPitches: total, usage, veloTrend, firstPitchStrikePct, putAway, zoneHeatmap });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/players/:team/:name/spray-chart', async (req, res) => {
+  if (!pg) return res.json({});
+  const team = decodeURIComponent(req.params.team), name = decodeURIComponent(req.params.name);
+  const season = req.query.season || getSeason();
+  try {
+    const { rows } = await pg.query(
+      `SELECT pitch_type, result, batted_ball_type, spray_x, spray_y, balls, strikes
+       FROM pitches WHERE season=$1 AND batter_team=$2 AND batter_name=$3`,
+      [season, team, name]
+    );
+    const battedBalls = rows
+      .filter(r => r.result === 'in_play' && r.spray_x != null && r.spray_y != null)
+      .map(r => ({ sprayX: Number(r.spray_x), sprayY: Number(r.spray_y), battedBallType: r.batted_ball_type, pitchType: r.pitch_type }));
+
+    const seenByType = {}, whiffByType = {};
+    for (const r of rows) {
+      const t = r.pitch_type || 'UNK';
+      seenByType[t] = (seenByType[t]||0) + 1;
+      if (r.result === 'swinging_strike') whiffByType[t] = (whiffByType[t]||0) + 1;
+    }
+    const whiffRate = Object.entries(seenByType).map(([type, seen]) => ({
+      pitchType: type, seen, whiffs: whiffByType[type]||0,
+      whiffPct: seen ? +((whiffByType[type]||0)/seen*100).toFixed(1) : 0,
+    }));
+
+    const countMap = {};
+    for (const r of rows) {
+      const key = `${r.balls ?? '?'}-${r.strikes ?? '?'}|${r.pitch_type||'UNK'}|${r.result}`;
+      countMap[key] = (countMap[key]||0) + 1;
+    }
+    const tendencies = Object.entries(countMap).map(([k,count]) => {
+      const [count_, pitchType, result] = k.split('|');
+      const [balls, strikes] = count_.split('-');
+      return { balls, strikes, pitchType, result, count };
+    });
+
+    res.json({ battedBalls, whiffRate, tendencies });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/matchup/:pitcherTeam/:pitcherName/:batterTeam/:batterName', async (req, res) => {
+  if (!pg) return res.json([]);
+  const pitcherTeam = decodeURIComponent(req.params.pitcherTeam), pitcherName = decodeURIComponent(req.params.pitcherName);
+  const batterTeam  = decodeURIComponent(req.params.batterTeam),  batterName  = decodeURIComponent(req.params.batterName);
+  const season = req.query.season || getSeason();
+  try {
+    const { rows } = await pg.query(
+      `SELECT p.*, cs.game_date, cs.opponent
+       FROM pitches p LEFT JOIN charting_sessions cs ON cs.id = p.session_id
+       WHERE p.season=$1 AND p.pitcher_team=$2 AND p.pitcher_name=$3 AND p.batter_team=$4 AND p.batter_name=$5
+       ORDER BY p.ts ASC`,
+      [season, pitcherTeam, pitcherName, batterTeam, batterName]
+    );
+    res.json(rows.map(r => ({
+      id: r.id, sessionId: r.session_id, gameDate: r.game_date?.toISOString?.().slice(0,10) || null, opponent: r.opponent,
+      inning: r.inning, half: r.half, balls: r.balls, strikes: r.strikes, outs: r.outs,
+      pitchType: r.pitch_type, velo: r.velo != null ? Number(r.velo) : null,
+      zoneX: r.zone_x != null ? Number(r.zone_x) : null, zoneY: r.zone_y != null ? Number(r.zone_y) : null,
+      result: r.result, battedBallType: r.batted_ball_type,
+      sprayX: r.spray_x != null ? Number(r.spray_x) : null, sprayY: r.spray_y != null ? Number(r.spray_y) : null,
+      ts: r.ts,
+    })));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -235,6 +235,19 @@ hr{border:none;border-top:1px solid var(--g7);margin:14px 0}
       <div id="v-pitches-body"><div class="loading"><div class="spin"></div></div></div>
     </div>
 
+    <!-- SCHEDULE -->
+    <div id="v-schedule" class="view">
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-hdr" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Batavia Muckdogs Schedule</span>
+          <span id="sched-record" class="mu s11"></span>
+        </div>
+        <div id="schedule-body">
+          <div class="loading"><div class="spin"></div></div>
+        </div>
+      </div>
+    </div>
+
     <!-- REPORTS -->
     <div id="v-reports" class="view">
       <!-- Scout Reports (photo upload) -->
@@ -293,6 +306,112 @@ hr{border:none;border-top:1px solid var(--g7);margin:14px 0}
       <div id="leaders-body"><div class="loading"><div class="spin"></div><p style="margin-top:8px">Loading league stats…</p></div></div>
     </div>
 
+    <!-- CHART -->
+    <div id="v-chart" class="view">
+      <div id="chart-setup">
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-hdr">Nearby Games</div>
+          <div class="card-body" id="chart-sched-list"><div class="loading"><div class="spin"></div></div></div>
+        </div>
+        <button class="btn btn-s btn-bl" onclick="toggleChartNewForm()">+ New (Scrimmage / Bullpen)</button>
+        <div id="chart-new-form" style="display:none;margin-top:12px">
+          <div class="fg"><label class="fl">Opponent</label><input class="fi" id="cn-opp" placeholder="Opponent name"></div>
+          <div class="frow" style="margin-bottom:13px">
+            <div class="fg" style="margin:0"><label class="fl">Date</label><input class="fi" id="cn-date" type="date"></div>
+            <div class="fg" style="margin:0"><label class="fl">Home/Away</label>
+              <select class="fsel" id="cn-homeaway"><option value="home">Home</option><option value="away">Away</option><option value="">N/A</option></select>
+            </div>
+          </div>
+          <div class="fg"><label class="fl">Type</label>
+            <select class="fsel" id="cn-type"><option value="scrimmage">Scrimmage</option><option value="bullpen">Bullpen</option><option value="game">Game</option></select>
+          </div>
+          <button class="btn btn-p btn-bl" onclick="startNewChartSession()">Start Session</button>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="card-hdr">Past Sessions</div>
+          <div class="card-body" id="chart-past-sessions"><div class="loading"><div class="spin"></div></div></div>
+        </div>
+      </div>
+
+      <div id="chart-live" style="display:none">
+        <div class="flex-bc mb8">
+          <span class="mu s12" id="chart-session-label"></span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-xs btn-s" onclick="openChartReport(chartSession.id)">Report</button>
+            <button class="btn btn-xs btn-s" onclick="endChartSession()">End Session</button>
+          </div>
+        </div>
+
+        <div class="frow" style="margin-bottom:10px">
+          <div class="fg" style="margin:0"><label class="fl">Pitcher</label><select class="fsel" id="ch-pitcher" onchange="onPitcherChange()"></select></div>
+          <div class="fg" style="margin:0"><label class="fl">Batter</label><select class="fsel" id="ch-batter" onchange="onBatterChange()"></select></div>
+        </div>
+
+        <div class="flex-bc mb8">
+          <span id="ch-count" style="font-weight:800;font-size:15px"></span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span id="ch-queue-badge" class="pill pill-y" style="display:none"></span>
+            <button class="btn btn-xs btn-s" onclick="adjustCount('balls',-1)">B-</button>
+            <button class="btn btn-xs btn-s" onclick="adjustCount('strikes',-1)">S-</button>
+            <button class="btn btn-xs btn-s" onclick="adjustCount('outs',-1)">O-</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:10px">
+          <div class="card-body" style="padding:10px">
+            <svg id="ch-zone" viewBox="0 0 200 240" style="width:100%;max-width:260px;display:block;margin:0 auto;touch-action:none;cursor:pointer" onclick="onZoneTap(event)">
+              <rect x="0" y="0" width="200" height="240" fill="#111" rx="8"/>
+              <rect x="40" y="30" width="120" height="180" fill="none" stroke="#555" stroke-width="1.5"/>
+              <line x1="80" y1="30" x2="80" y2="210" stroke="#333"/>
+              <line x1="120" y1="30" x2="120" y2="210" stroke="#333"/>
+              <line x1="40" y1="90" x2="160" y2="90" stroke="#333"/>
+              <line x1="40" y1="150" x2="160" y2="150" stroke="#333"/>
+              <circle id="ch-zone-marker" cx="-20" cy="-20" r="6" fill="var(--red)" style="display:none"/>
+            </svg>
+            <div class="mu s11" style="text-align:center;margin-top:4px">Tap pitch location</div>
+          </div>
+        </div>
+
+        <div class="divlabel">Pitch Type</div>
+        <div id="ch-pitch-types" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
+
+        <div class="divlabel">Velocity</div>
+        <div class="fg"><input class="fi" id="ch-velo" type="number" inputmode="numeric" placeholder="mph" style="text-align:center;font-size:20px;font-weight:800"></div>
+
+        <div class="divlabel">Result</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px" id="ch-results"></div>
+
+        <div id="ch-inplay-section" style="display:none">
+          <div class="divlabel">Batted Ball</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="ch-bb-types"></div>
+          <div class="divlabel">Outcome</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="ch-outcome-types"></div>
+          <div class="divlabel">Spray Location (tap field)</div>
+          <svg id="ch-field" viewBox="0 0 200 200" style="width:100%;max-width:240px;display:block;margin:0 auto 10px;cursor:pointer" onclick="onSprayTap(event)">
+            <path d="M100 190 L20 90 A115 115 0 0 1 180 90 Z" fill="#14261a" stroke="#2d5" stroke-width="1"/>
+            <circle id="ch-spray-marker" cx="-20" cy="-20" r="6" fill="var(--yellow)" style="display:none"/>
+          </svg>
+        </div>
+
+        <button class="btn btn-p btn-bl" onclick="confirmPitch()" id="ch-confirm-btn">Log Pitch</button>
+        <button class="btn btn-s btn-bl mt8" onclick="undoLastPitch()">Undo Last Pitch</button>
+
+        <div class="divlabel mt12">Recent Pitches</div>
+        <div id="ch-recent-log"></div>
+      </div>
+    </div>
+
+    <!-- CHART REPORT -->
+    <div id="v-chart-report" class="view">
+      <div class="mu s12 mb8" id="rpt-session-label"></div>
+      <div class="fg" id="rpt-pitcher-filter-wrap" style="display:none">
+        <label class="fl">Pitcher</label>
+        <select class="fsel" id="rpt-pitcher-filter" onchange="onReportPitcherChange()"></select>
+      </div>
+      <div id="rpt-body"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+
   </div>
 
   <nav id="tabs">
@@ -312,9 +431,17 @@ hr{border:none;border-top:1px solid var(--g7);margin:14px 0}
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="1.5"/><path d="M12 3c0 5 3 8 3 9s-3 4-3 9M12 3c0 5-3 8-3 9s3 4 3 9" stroke-width="1.5"/></svg>
       Avail
     </button>
+    <button class="tb" id="tab-schedule" onclick="switchTab('schedule',this)">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" stroke-width="1.5"/><path d="M16 2v4M8 2v4M3 10h18" stroke-width="1.5" stroke-linecap="round"/></svg>
+      Schedule
+    </button>
     <button class="tb" id="tab-reports" onclick="switchTab('reports',this)">
       <svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2" stroke-width="1.5"/><path d="M8 8h8M8 12h8M8 16h5" stroke-width="1.5" stroke-linecap="round"/></svg>
       Reports
+    </button>
+    <button class="tb" id="tab-chart" onclick="switchTab('chart',this)">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="1.5"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3" stroke-width="1.5" stroke-linecap="round"/></svg>
+      Chart
     </button>
   </nav>
 </div>
@@ -336,6 +463,29 @@ hr{border:none;border-top:1px solid var(--g7);margin:14px 0}
 
     <!-- Dewey flag — shown when prior scouting approach failed -->
     <div id="sc-dewey-flag" style="display:none;background:rgba(255,160,0,.12);border:1px solid var(--yellow);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;line-height:1.5"></div>
+
+    <!-- ── CHARTED PITCH DATA (pitchers) ── -->
+    <div id="sc-pitch-usage-section" style="display:none">
+      <div class="divlabel">🎯 Charted Pitch Data</div>
+      <div id="sc-pitch-usage" style="margin-bottom:14px"></div>
+      <hr>
+    </div>
+
+    <!-- ── SPRAY CHART (hitters) ── -->
+    <div id="sc-spray-section" style="display:none">
+      <div class="divlabel">📈 Spray Chart &amp; Whiff Rate</div>
+      <div id="sc-spray-chart" style="margin-bottom:14px"></div>
+      <hr>
+    </div>
+
+    <!-- ── MATCHUP HISTORY ── -->
+    <div class="divlabel">⚔️ Matchup History</div>
+    <div class="fg">
+      <select class="fsel" id="sc-matchup-opp" onchange="loadMatchupHistory()">
+        <option value="">Select opponent…</option>
+      </select>
+    </div>
+    <div id="sc-matchup-body" style="margin-bottom:14px"></div>
 
     <hr>
 
@@ -600,7 +750,7 @@ hr{border:none;border-top:1px solid var(--g7);margin:14px 0}
 // ══════════════════════════════════════════════════
 //  CONFIG
 // ══════════════════════════════════════════════════
-const RAIL = '';
+const RAIL = 'https://web-production-71483.up.railway.app';
 
 // 2025 PGCBL West Division league averages
 const LA_WHIP = 1.37;
@@ -645,6 +795,34 @@ let pendingPhotos= [];
 let currentRepKey= null;
 let navStack     = [];
 let editingNoteId= null;
+let currentIsHitter = null;
+
+// Pitch charting state
+let chartSession  = null;   // {id, opponent, homeAway, type, teamA, teamB}
+let chartPitcher  = null;   // {name, team}
+let chartBatter   = null;   // {name, team}
+let chartCount    = { balls:0, strikes:0, outs:0, inning:1, half:'top' };
+let chartRepertoire = ['FB','SI','CH','CB','SL','CT'];
+let chartPitchType = null;
+let chartResult   = null;
+let chartZone     = null;   // {x,y}
+let chartBB       = null;
+let chartOutcome  = null;   // 'out' | 'hit'
+let chartSpray    = null;   // {x,y}
+const RESULT_DEFS = [
+  {key:'ball', label:'Ball'}, {key:'called_strike', label:'Called Strike'},
+  {key:'swinging_strike', label:'Swinging Strike'}, {key:'foul', label:'Foul'},
+  {key:'in_play', label:'In Play'}, {key:'hbp', label:'HBP'},
+];
+const BB_TYPES  = ['ground_ball','line_drive','fly_ball','popup'];
+const BB_LABELS = {ground_ball:'Ground Ball', line_drive:'Line Drive', fly_ball:'Fly Ball', popup:'Popup'};
+
+// Game report state
+let reportData          = null;  // {session, pitches}
+let reportFilterPitcher = null;  // "team||name" or null (all)
+let reportFilterType    = null;  // pitch type or null (all)
+const PITCH_COLOR_MAP = { FB:'#e8273e', CB:'#4a90e2', CH:'#4cd964', SL:'#ff9f43', SI:'#a55eea', CT:'#26c6da' };
+const ZONE_CLUSTER_RADIUS = 0.045; // normalized 0-1 units (~4.5% of zone width) — tweak after seeing real data
 
 const LS = {
   get: k => { try { return JSON.parse(localStorage.getItem(k)) } catch { return null } },
@@ -681,12 +859,13 @@ async function init() {
   cleanPitchAvailDB();
   setHdr('Dawg<span>Data</span>', 'Loading…');
   const cached = LS.get('stats_cache');
-  if (cached) { allStats = cached; applyStats(); setHdr('Dawg<span>Data</span>', 'Cached · '+timeAgo(cached.updatedAt)); }
+  if (cached) { cached._fromCache = true; allStats = cached; applyStats(); setHdr('Dawg<span>Data</span>', 'Cached · '+timeAgo(cached.updatedAt)); }
   await fetchStats();
   // Pull cloud data for Dewey shared access
   fetchCloudScouts();
   fetchPitchData();
   fetchSheets();
+  syncPitchQueue();
 }
 
 async function fetchStats() {
@@ -698,6 +877,7 @@ async function fetchStats() {
       const hasData = (data.hitters?.length > 0) || (data.pitchers?.length > 0) || (data.standings?.length > 0);
       if (!hasData) return;
       storeSnapshot(data);
+      data._fromCache = false;
       allStats = data;
       LS.set('stats_cache', data);
       applyStats();
@@ -715,6 +895,20 @@ async function refreshStats() {
   await fetchStats();
   toast('Refreshed ✓');
 }
+
+// Auto-refresh stats every 30 minutes while app is open
+setInterval(() => { if (RAIL) fetchStats(); }, 30 * 60 * 1000);
+
+// Keep the "Updated X ago" text live — re-render timestamp every 60 seconds
+setInterval(() => {
+  const sub = document.getElementById('hdr-sub');
+  if (sub && allStats?.updatedAt && sub.textContent.includes('ago')) {
+    const cur = sub.textContent;
+    const prefix = cur.replace(/Updated .+|Cached .+/, '').trim();
+    const tag = allStats._fromCache ? 'Cached' : 'Updated';
+    sub.textContent = (prefix ? prefix + ' · ' : '') + tag + ' ' + timeAgo(allStats.updatedAt);
+  }
+}, 60 * 1000);
 
 // Pull cloud scouting reports and merge with local (Dewey shared DB)
 async function fetchCloudScouts() {
@@ -1101,6 +1295,7 @@ function renderRoster(elId, label, players, isHitter) {
 // ══════════════════════════════════════════════════
 function openScout(playerName, teamName, isHitter) {
   currentKey = `${teamName}||${playerName}`;
+  currentIsHitter = isHitter;
   pendingPhotos = [];
   editingNoteId = null;
 
@@ -1133,6 +1328,16 @@ function openScout(playerName, teamName, isHitter) {
 
   // Dewey flag — check if our approach failed on this player in a prior game
   checkDeweyFlag(playerName, teamName);
+
+  // Charted pitch data — usage/velo/zone for pitchers, spray/whiff for hitters
+  document.getElementById('sc-pitch-usage-section').style.display = isHitter ? 'none' : '';
+  document.getElementById('sc-spray-section').style.display = isHitter ? '' : 'none';
+  if (isHitter) loadHitterSprayData(playerName, teamName);
+  else loadPitcherPitchData(playerName, teamName);
+
+  // Matchup history — opponent picker
+  populateMatchupOpponents(teamName);
+  document.getElementById('sc-matchup-body').innerHTML = '';
 
   // Game scouting reports from photo uploads
   loadGameScoutingReports(playerName);
@@ -1406,6 +1611,138 @@ async function loadTendencyReportsList() {
           </div>`).join('')}
       </div>`).join('');
   } catch {}
+}
+
+// ── Schedule ──────────────────────────────────────────────────────────────────
+async function loadSchedule() {
+  const el = document.getElementById('schedule-body');
+  const recEl = document.getElementById('sched-record');
+  if (!el) return;
+  el.innerHTML = '<div class="loading"><div class="spin"></div></div>';
+  try {
+    const r = await fetch(`${RAIL}/api/schedule`, { signal: AbortSignal.timeout(10000) });
+    const games = await r.json();
+    if (!games.length) {
+      el.innerHTML = '<div class="mu s12" style="padding:12px;text-align:center">No schedule data yet — scraping in progress</div>';
+      return;
+    }
+    const today = new Date().toISOString().slice(0,10);
+    const finals = games.filter(g => g.status === 'final');
+    const wins   = finals.filter(g => g.result === 'W').length;
+    const losses = finals.filter(g => g.result === 'L').length;
+    if (recEl) recEl.textContent = finals.length ? `${wins}-${losses}` : '';
+
+    // Split into upcoming and past
+    const upcoming = games.filter(g => g.status !== 'final' || g.date >= today).sort((a,b)=>a.date?.localeCompare(b.date));
+    const past     = games.filter(g => g.status === 'final' && g.date < today).sort((a,b)=>b.date?.localeCompare(a.date));
+
+    let html = '';
+
+    // Next game callout
+    const next = upcoming.find(g => g.status === 'scheduled');
+    if (next) {
+      const oppName = next.isHome ? next.awayTeam : next.homeTeam;
+      html += `<div style="background:rgba(var(--p-rgb,200,16,46),.1);border:1px solid var(--p);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:10px;font-weight:700;color:var(--p);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Next Game</div>
+        <div style="font-size:15px;font-weight:800">${esc(next.isHome?'vs':'@')} ${esc(oppName)}</div>
+        <div class="mu s12" style="margin-top:2px">${fmtDate(next.date)}${next.time?' · '+esc(next.time):''} ${next.location?'· '+esc(next.location):''}</div>
+      </div>`;
+    }
+
+    // Upcoming games
+    if (upcoming.length) {
+      html += `<div class="divlabel" style="margin-bottom:6px">Upcoming (${upcoming.length})</div>`;
+      html += upcoming.map(g => {
+        const opp = g.isHome ? g.awayTeam : g.homeTeam;
+        const vs  = g.isHome ? 'vs' : '@';
+        return `<div style="display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--g1)">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:13px">${esc(vs)} ${esc(opp)}</div>
+            <div class="mu s11" style="margin-top:1px">${fmtDate(g.date)}${g.time?' · '+esc(g.time):''}${g.location?' · '+esc(g.location):''}</div>
+          </div>
+          <div style="font-size:11px;font-weight:700;color:var(--g4);min-width:40px;text-align:right">TBD</div>
+        </div>`;
+      }).join('');
+    }
+
+    // Past results
+    if (past.length) {
+      html += `<div class="divlabel" style="margin-top:14px;margin-bottom:6px">Results (${past.length})</div>`;
+      html += past.map(g => {
+        const opp  = g.isHome ? g.awayTeam : g.homeTeam;
+        const vs   = g.isHome ? 'vs' : '@';
+        const win  = g.result === 'W';
+        const loss = g.result === 'L';
+        const score = (g.bataviaScore !== null && g.oppScore !== null) ? `${g.bataviaScore}-${g.oppScore}` : '';
+        const rColor = win ? 'var(--green)' : loss ? 'var(--red)' : 'var(--g4)';
+        return `<div style="display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--g1);cursor:pointer" onclick="loadBoxScore('${esc(g.gameId)}','${esc(opp)}','${esc(g.date)}')">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:13px">${esc(vs)} ${esc(opp)}</div>
+            <div class="mu s11" style="margin-top:1px">${fmtDate(g.date)}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-weight:800;font-size:14px;color:${rColor}">${g.result||'—'}</div>
+            <div class="mu s11">${esc(score)}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    el.innerHTML = html || '<div class="mu s12" style="padding:12px;text-align:center">No games found</div>';
+  } catch(e) {
+    el.innerHTML = `<div class="mu s12" style="padding:12px;text-align:center;color:var(--red)">Could not load schedule</div>`;
+  }
+}
+
+async function loadBoxScore(gameId, opponent, date) {
+  try {
+    const r = await fetch(`${RAIL}/api/boxscores?gameId=${encodeURIComponent(gameId)}&limit=1`, { signal: AbortSignal.timeout(8000) });
+    const games = await r.json();
+    const g = games[0];
+    if (!g) { toast('No box score data yet for this game'); return; }
+
+    const batPitchers = (g.pitcherLines||[]).filter(p=>/batavia/i.test(p.team||''));
+    const oppPitchers = (g.pitcherLines||[]).filter(p=>!/batavia/i.test(p.team||''));
+    const homeWon = g.homeScore > g.awayScore;
+
+    let body = `<div style="text-align:center;margin-bottom:16px">
+      <div style="font-size:22px;font-weight:900">${g.homeScore} – ${g.awayScore}</div>
+      <div class="mu s11">${esc(g.homeTeam)} vs ${esc(g.awayTeam)} · ${fmtDate(g.date)}</div>
+    </div>`;
+
+    if (g.innings?.length) {
+      body += `<div class="divlabel">Line Score</div>
+      <div style="overflow-x:auto;margin-bottom:12px">
+        <table style="width:100%;font-size:11px;border-collapse:collapse">
+          ${g.innings.map(inn => `<tr><td style="padding:4px 6px;font-weight:600;white-space:nowrap">${esc(inn.team)}</td>${(inn.runs||[]).map(v=>`<td style="padding:4px 6px;text-align:center;border-left:1px solid var(--g1)">${v??'—'}</td>`).join('')}</tr>`).join('')}
+        </table>
+      </div>`;
+    }
+
+    const pitcherTable = (pitchers, label) => {
+      if (!pitchers.length) return '';
+      return `<div class="divlabel">${label}</div>
+      <div style="overflow-x:auto;margin-bottom:12px">
+        <table style="width:100%;font-size:11px;border-collapse:collapse">
+          <tr style="color:var(--g4)"><th style="text-align:left;padding:4px 6px">Pitcher</th><th>IP</th><th>H</th><th>R</th><th>ER</th><th>BB</th><th>K</th><th>NP</th></tr>
+          ${pitchers.map(p=>`<tr style="border-top:1px solid var(--g1)"><td style="padding:4px 6px;font-weight:600">${esc(p.name)}</td><td style="text-align:center">${p.ip}</td><td style="text-align:center">${p.h}</td><td style="text-align:center">${p.r}</td><td style="text-align:center">${p.er}</td><td style="text-align:center">${p.bb}</td><td style="text-align:center">${p.k}</td><td style="text-align:center;font-weight:700;color:var(--p)">${p.np||'—'}</td></tr>`).join('')}
+        </table>
+      </div>`;
+    };
+
+    body += pitcherTable(batPitchers, '⚾ Batavia Pitchers');
+    body += pitcherTable(oppPitchers, `⚾ ${esc(opponent)} Pitchers`);
+
+    if (!batPitchers.length && !oppPitchers.length) {
+      body += '<div class="mu s12" style="text-align:center;padding:8px">Pitcher line data not yet available for this game</div>';
+    }
+
+    document.getElementById('rv-name').textContent = `${opponent} · ${fmtDate(date)}`;
+    document.getElementById('rv-body').innerHTML = body;
+    openOv('ov-report');
+  } catch {
+    toast('Could not load box score');
+  }
 }
 
 function loadScoutModal() {
@@ -2538,7 +2875,13 @@ function switchTab(name, btn) {
   if (name==='leaders'){ document.getElementById('v-leaders').classList.add('on'); setHdr('League Leaders','PGCBL West'+ts); renderLeaders(); }
   if (name==='matrix') { document.getElementById('v-matrix').classList.add('on');  setHdr('Run Matrix','Batavia pitchers'+ts); renderMatrixView(); }
   if (name==='pitches'){ document.getElementById('v-pitches').classList.add('on'); setHdr('Pitch Availability','Batavia Muckdogs'+ts); renderPitchAvailability(); }
+  if (name==='schedule'){ document.getElementById('v-schedule').classList.add('on'); setHdr('Schedule','Batavia Muckdogs'+ts); loadSchedule(); }
   if (name==='reports'){ document.getElementById('v-reports').classList.add('on'); setHdr('Reports','Game sheets · player notes'+ts); renderGameSheets(); renderReports(); loadScoutReports(); loadTendencyReportsList(); }
+  if (name==='chart') {
+    document.getElementById('v-chart').classList.add('on');
+    setHdr('Chart', chartSession ? (chartSession.homeAway==='home'?'vs':'@')+' '+chartSession.teamB : 'Live pitch charting');
+    if (!chartSession) loadChartSetup();
+  }
 }
 function openOv(id)  { document.getElementById(id).classList.add('open'); }
 function closeOv(id) { document.getElementById(id).classList.remove('open'); }
@@ -2564,9 +2907,703 @@ function fmtTs(iso){
   return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
 }
 
+// ══════════════════════════════════════════════════
+//  PITCH CHARTING
+// ══════════════════════════════════════════════════
+function getPitchQueue() { return LS.get('pitch_queue') || []; }
+function setPitchQueue(q) { LS.set('pitch_queue', q); }
+function updateQueueBadge() {
+  const el = document.getElementById('ch-queue-badge');
+  if (!el) return;
+  const n = getPitchQueue().length;
+  if (n) { el.style.display = ''; el.textContent = n + ' queued'; }
+  else el.style.display = 'none';
+}
+let pitchSyncing = false;
+async function syncPitchQueue() {
+  if (pitchSyncing) return;
+  const q = getPitchQueue();
+  if (!q.length) return;
+  pitchSyncing = true;
+  try {
+    const r = await fetch(`${RAIL}/api/pitches`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pitches: q }), signal: AbortSignal.timeout(15000)
+    });
+    if (r.ok) { setPitchQueue([]); updateQueueBadge(); renderRecentPitchLog(); }
+  } catch (e) { /* offline — stays queued, will retry */ }
+  finally { pitchSyncing = false; }
+}
+window.addEventListener('online', syncPitchQueue);
+setInterval(syncPitchQueue, 20000);
+
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00'); d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+async function loadChartSetup() {
+  document.getElementById('chart-setup').style.display = '';
+  document.getElementById('chart-live').style.display = 'none';
+  loadPastSessions();
+  const el = document.getElementById('chart-sched-list');
+  el.innerHTML = '<div class="loading"><div class="spin"></div></div>';
+  try {
+    const r = await fetch(`${RAIL}/api/schedule`, { signal: AbortSignal.timeout(10000) });
+    const games = await r.json();
+    const today = new Date().toISOString().slice(0, 10);
+    const relevant = (games || [])
+      .filter(g => g.date && g.date >= addDays(today, -3) && g.date <= addDays(today, 10))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (!relevant.length) { el.innerHTML = '<div class="mu s12" style="padding:8px 0">No nearby scheduled games</div>'; return; }
+    el.innerHTML = relevant.map(g => {
+      const opp = g.isHome ? g.awayTeam : g.homeTeam;
+      return `<div class="team-btn" onclick="startChartSessionFromGame('${esc(g.gameId)}','${esc(opp)}',${!!g.isHome})">
+        <div><div class="tn">${g.isHome ? 'vs' : '@'} ${escHtml(opp)}</div><div class="ta">${fmtDate(g.date)}</div></div>
+      </div>`;
+    }).join('');
+  } catch (e) { el.innerHTML = '<div class="mu s12" style="padding:8px 0;color:var(--red-l)">Could not load schedule</div>'; }
+}
+
+function toggleChartNewForm() {
+  const f = document.getElementById('chart-new-form');
+  f.style.display = f.style.display === 'none' ? '' : 'none';
+}
+
+async function startChartSessionFromGame(gameId, opponent, isHome) {
+  try {
+    const r = await fetch(`${RAIL}/api/charting-sessions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId })
+    });
+    const data = await r.json();
+    if (!data.id) throw new Error('no id');
+    beginChartSession(data.id, opponent, isHome ? 'home' : 'away', 'game');
+  } catch (e) { toast('Could not start session'); }
+}
+
+async function startNewChartSession() {
+  const opponent = document.getElementById('cn-opp').value.trim();
+  const date = document.getElementById('cn-date').value || new Date().toISOString().slice(0, 10);
+  const homeAway = document.getElementById('cn-homeaway').value;
+  const type = document.getElementById('cn-type').value;
+  if (!opponent) { toast('Enter an opponent'); return; }
+  try {
+    const r = await fetch(`${RAIL}/api/charting-sessions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, opponent, homeAway, type })
+    });
+    const data = await r.json();
+    if (!data.id) throw new Error('no id');
+    beginChartSession(data.id, opponent, homeAway, type);
+  } catch (e) { toast('Could not start session'); }
+}
+
+function beginChartSession(id, opponent, homeAway, type) {
+  chartSession = { id, opponent, homeAway, type, teamA: 'Batavia Muckdogs', teamB: opponent || 'Opponent' };
+  chartPitcher = null; chartBatter = null;
+  resetPitchForm();
+  document.getElementById('chart-setup').style.display = 'none';
+  document.getElementById('chart-live').style.display = '';
+  document.getElementById('chart-session-label').textContent =
+    `${homeAway === 'home' ? 'vs' : '@'} ${opponent || '—'} · ${type}`;
+  populateChartRosterSelectors();
+  updateQueueBadge();
+  renderRecentPitchLog();
+}
+
+function endChartSession() {
+  chartSession = null; chartPitcher = null; chartBatter = null;
+  document.getElementById('chart-live').style.display = 'none';
+  loadChartSetup();
+}
+
+function populateChartRosterSelectors() {
+  const bataviaRoster = allStats?.rosters?.['Batavia Muckdogs'] || [];
+  const oppRoster = allStats?.rosters?.[chartSession.teamB] || [];
+  const allPlayers = [
+    ...bataviaRoster.map(p => ({ ...p, team: 'Batavia Muckdogs' })),
+    ...oppRoster.map(p => ({ ...p, team: chartSession.teamB })),
+  ];
+  const opt = p => `<option value="${escHtml(p.team)}||${escHtml(p.name)}">${escHtml(p.name)} (${p.team === 'Batavia Muckdogs' ? 'Batavia' : escHtml(p.team)})</option>`;
+  document.getElementById('ch-pitcher').innerHTML = '<option value="">Select pitcher…</option>' + allPlayers.map(opt).join('');
+  document.getElementById('ch-batter').innerHTML  = '<option value="">Select batter…</option>'  + allPlayers.map(opt).join('');
+}
+
+function onPitcherChange() {
+  const v = document.getElementById('ch-pitcher').value;
+  chartPitcher = v ? { team: v.split('||')[0], name: v.split('||')[1] } : null;
+  loadChartRepertoire();
+}
+function onBatterChange() {
+  const v = document.getElementById('ch-batter').value;
+  chartBatter = v ? { team: v.split('||')[0], name: v.split('||')[1] } : null;
+}
+
+async function loadChartRepertoire() {
+  chartRepertoire = ['FB', 'SI', 'CH', 'CB', 'SL', 'CT'];
+  if (chartPitcher) {
+    try {
+      const r = await fetch(`${RAIL}/api/repertoire/${encodeURIComponent(chartPitcher.team)}/${encodeURIComponent(chartPitcher.name)}`, { signal: AbortSignal.timeout(8000) });
+      const data = await r.json();
+      if (Array.isArray(data.pitchTypes) && data.pitchTypes.length) chartRepertoire = data.pitchTypes;
+    } catch (e) {}
+  }
+  renderPitchTypeButtons();
+}
+
+function renderPitchTypeButtons() {
+  const el = document.getElementById('ch-pitch-types');
+  el.innerHTML = chartRepertoire.map(t =>
+    `<button class="btn btn-sm ${chartPitchType === t ? 'btn-p' : 'btn-s'}" onclick="selectPitchType('${t}')">${t}</button>`
+  ).join('') + `<button class="btn btn-sm btn-s" onclick="editRepertoire()">✎ Edit</button>`;
+}
+function selectPitchType(t) { chartPitchType = t; renderPitchTypeButtons(); }
+
+function editRepertoire() {
+  const input = prompt('Pitch types (comma separated)', chartRepertoire.join(','));
+  if (input == null) return;
+  chartRepertoire = input.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  renderPitchTypeButtons();
+  if (chartPitcher) {
+    fetch(`${RAIL}/api/repertoire/${encodeURIComponent(chartPitcher.team)}/${encodeURIComponent(chartPitcher.name)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pitchTypes: chartRepertoire })
+    }).catch(() => {});
+  }
+}
+
+function renderResultButtons() {
+  document.getElementById('ch-results').innerHTML = RESULT_DEFS.map(r =>
+    `<button class="btn btn-sm ${chartResult === r.key ? 'btn-p' : 'btn-s'}" onclick="selectResult('${r.key}')">${r.label}</button>`
+  ).join('');
+}
+function selectResult(key) {
+  chartResult = key;
+  renderResultButtons();
+  document.getElementById('ch-inplay-section').style.display = key === 'in_play' ? '' : 'none';
+  if (key !== 'in_play') { chartBB = null; chartOutcome = null; chartSpray = null; renderBBButtons(); renderOutcomeButtons(); hideSprayMarker(); }
+}
+function renderBBButtons() {
+  document.getElementById('ch-bb-types').innerHTML = BB_TYPES.map(t =>
+    `<button class="btn btn-sm ${chartBB === t ? 'btn-p' : 'btn-s'}" onclick="selectBB('${t}')">${BB_LABELS[t]}</button>`
+  ).join('');
+}
+function selectBB(t) { chartBB = t; renderBBButtons(); }
+function renderOutcomeButtons() {
+  document.getElementById('ch-outcome-types').innerHTML = ['out', 'hit'].map(o =>
+    `<button class="btn btn-sm ${chartOutcome === o ? 'btn-p' : 'btn-s'}" onclick="selectOutcome('${o}')">${o === 'out' ? 'Out' : 'Hit'}</button>`
+  ).join('');
+}
+function selectOutcome(o) { chartOutcome = o; renderOutcomeButtons(); }
+
+function onZoneTap(e) {
+  const svg = document.getElementById('ch-zone');
+  const rect = svg.getBoundingClientRect();
+  chartZone = {
+    x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
+    y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
+  };
+  const m = document.getElementById('ch-zone-marker');
+  m.setAttribute('cx', chartZone.x * 200); m.setAttribute('cy', chartZone.y * 240); m.style.display = '';
+}
+function onSprayTap(e) {
+  const svg = document.getElementById('ch-field');
+  const rect = svg.getBoundingClientRect();
+  chartSpray = {
+    x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
+    y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
+  };
+  const m = document.getElementById('ch-spray-marker');
+  m.setAttribute('cx', chartSpray.x * 200); m.setAttribute('cy', chartSpray.y * 200); m.style.display = '';
+}
+function hideSprayMarker() { const m = document.getElementById('ch-spray-marker'); if (m) m.style.display = 'none'; }
+
+function updateCountDisplay() {
+  const el = document.getElementById('ch-count');
+  if (el) el.textContent = `${chartCount.balls}-${chartCount.strikes}, ${chartCount.outs} out · Inn ${chartCount.inning} (${chartCount.half})`;
+}
+function adjustCount(field, delta) {
+  chartCount[field] = Math.max(0, chartCount[field] + delta);
+  updateCountDisplay();
+}
+function resetPitchForm() {
+  chartPitchType = null; chartResult = null; chartZone = null; chartBB = null; chartOutcome = null; chartSpray = null;
+  const velo = document.getElementById('ch-velo'); if (velo) velo.value = '';
+  renderPitchTypeButtons(); renderResultButtons(); renderBBButtons(); renderOutcomeButtons();
+  const ip = document.getElementById('ch-inplay-section'); if (ip) ip.style.display = 'none';
+  const zm = document.getElementById('ch-zone-marker'); if (zm) zm.style.display = 'none';
+  hideSprayMarker();
+  chartCount = { balls: 0, strikes: 0, outs: 0, inning: 1, half: 'top' };
+  updateCountDisplay();
+}
+function clearPitchInputs() {
+  chartPitchType = null; chartResult = null; chartZone = null; chartBB = null; chartOutcome = null; chartSpray = null;
+  document.getElementById('ch-velo').value = '';
+  renderPitchTypeButtons(); renderResultButtons(); renderBBButtons(); renderOutcomeButtons();
+  document.getElementById('ch-inplay-section').style.display = 'none';
+  const zm = document.getElementById('ch-zone-marker'); if (zm) zm.style.display = 'none';
+  hideSprayMarker();
+}
+
+function advanceCount(result) {
+  if (result === 'ball') chartCount.balls++;
+  else if (result === 'called_strike' || result === 'swinging_strike') chartCount.strikes++;
+  else if (result === 'foul') { if (chartCount.strikes < 2) chartCount.strikes++; }
+
+  const struckOut = chartCount.strikes >= 3;
+  const walked = chartCount.balls >= 4;
+  const paEnded = struckOut || walked || result === 'in_play' || result === 'hbp';
+
+  if (struckOut) chartCount.outs = Math.min(3, chartCount.outs + 1);
+  if (paEnded) { chartCount.balls = 0; chartCount.strikes = 0; }
+  if (chartCount.outs >= 3) { chartCount.outs = 0; chartCount.inning++; chartCount.half = chartCount.half === 'top' ? 'bottom' : 'top'; }
+  updateCountDisplay();
+}
+
+function confirmPitch() {
+  if (!chartSession) { toast('Start a session first'); return; }
+  if (!chartPitcher || !chartBatter) { toast('Select pitcher & batter'); return; }
+  if (!chartResult) { toast('Select a result'); return; }
+  const veloVal = document.getElementById('ch-velo').value;
+  const p = {
+    clientId: (crypto.randomUUID ? crypto.randomUUID() : 'p' + Date.now() + Math.random().toString(36).slice(2)),
+    sessionId: chartSession.id,
+    pitcherName: chartPitcher.name, pitcherTeam: chartPitcher.team,
+    batterName: chartBatter.name, batterTeam: chartBatter.team,
+    inning: chartCount.inning, half: chartCount.half,
+    balls: chartCount.balls, strikes: chartCount.strikes, outs: chartCount.outs,
+    pitchType: chartPitchType, velo: veloVal ? Number(veloVal) : null,
+    zoneX: chartZone ? chartZone.x : null, zoneY: chartZone ? chartZone.y : null,
+    result: chartResult, battedBallType: chartBB, inPlayOutcome: chartOutcome,
+    sprayX: chartSpray ? chartSpray.x : null, sprayY: chartSpray ? chartSpray.y : null,
+    ts: new Date().toISOString(),
+  };
+  advanceCount(chartResult);
+  const q = getPitchQueue(); q.push(p); setPitchQueue(q);
+  updateQueueBadge(); renderRecentPitchLog();
+  clearPitchInputs();
+  toast('Pitch logged');
+  syncPitchQueue();
+}
+
+function undoLastPitch() {
+  const q = getPitchQueue();
+  if (!q.length) { toast('No unsynced pitches to undo'); return; }
+  q.pop(); setPitchQueue(q);
+  updateQueueBadge(); renderRecentPitchLog();
+  toast('Removed last pitch');
+}
+
+function renderRecentPitchLog() {
+  const el = document.getElementById('ch-recent-log');
+  if (!el) return;
+  const q = getPitchQueue().slice(-8).reverse();
+  if (!q.length) { el.innerHTML = '<div class="mu s12" style="padding:8px 0">No pitches yet this session</div>'; return; }
+  el.innerHTML = q.map(p => `
+    <div class="flex-bc" style="padding:8px 0;border-bottom:1px solid var(--g7);font-size:12px">
+      <span>${escHtml(p.pitchType || '—')} ${p.velo ? p.velo + ' mph' : ''}</span>
+      <span class="mu">${escHtml((p.result || '').replace(/_/g, ' '))}</span>
+      <span class="mu">${p.balls}-${p.strikes}</span>
+    </div>`).join('');
+}
+
+// ── Player profile: charted pitch data ──
+async function loadPitcherPitchData(name, team) {
+  const el = document.getElementById('sc-pitch-usage');
+  el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0">Loading…</div>';
+  try {
+    const r = await fetch(`${RAIL}/api/players/${encodeURIComponent(team)}/${encodeURIComponent(name)}/pitch-data`, { signal: AbortSignal.timeout(8000) });
+    const d = await r.json();
+    if (!d.totalPitches) { el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0">No charted pitches yet</div>'; return; }
+    const usageHtml = (d.usage || []).sort((a, b) => b.count - a.count).map(u => `
+      <div class="flex-bc" style="padding:6px 0;border-bottom:1px solid var(--g7)">
+        <span style="font-weight:700">${escHtml(u.pitchType)}</span>
+        <span class="mu s12">${u.usagePct}% · ${u.avgVelo != null ? u.avgVelo + ' mph avg' : '—'}</span>
+      </div>`).join('');
+    const putAwayHtml = (d.putAway || []).slice(0, 3).map(p => `<span class="pill pill-r" style="margin-right:6px">${escHtml(p.pitchType)} ${p.pct}%</span>`).join('') || '<span class="mu s12">—</span>';
+    el.innerHTML = `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        ${chip('FPS%', d.firstPitchStrikePct != null ? d.firstPitchStrikePct + '%' : '—')}
+        ${chip('Pitches', d.totalPitches)}
+      </div>
+      <div class="mu s11" style="margin-bottom:4px;text-transform:uppercase;font-weight:700">Usage &amp; Velo</div>
+      ${usageHtml}
+      <div class="mu s11" style="margin:10px 0 4px;text-transform:uppercase;font-weight:700">Put-Away Pitch (2-strike Ks)</div>
+      ${putAwayHtml}`;
+  } catch (e) { el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0;color:var(--red-l)">Could not load pitch data</div>'; }
+}
+
+async function loadHitterSprayData(name, team) {
+  const el = document.getElementById('sc-spray-chart');
+  el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0">Loading…</div>';
+  try {
+    const r = await fetch(`${RAIL}/api/players/${encodeURIComponent(team)}/${encodeURIComponent(name)}/spray-chart`, { signal: AbortSignal.timeout(8000) });
+    const d = await r.json();
+    if (!(d.battedBalls || []).length && !(d.whiffRate || []).length) { el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0">No charted at-bats yet</div>'; return; }
+    const dots = (d.battedBalls || []).map(b => `<circle cx="${(b.sprayX * 200).toFixed(1)}" cy="${(b.sprayY * 200).toFixed(1)}" r="4" fill="var(--yellow)" opacity="0.85"/>`).join('');
+    const whiffHtml = (d.whiffRate || []).sort((a, b) => b.whiffPct - a.whiffPct).map(w => `
+      <div class="flex-bc" style="padding:5px 0;border-bottom:1px solid var(--g7)">
+        <span style="font-weight:700">${escHtml(w.pitchType)}</span>
+        <span class="mu s12">${w.whiffPct}% whiff (${w.whiffs}/${w.seen})</span>
+      </div>`).join('');
+    el.innerHTML = `
+      <svg viewBox="0 0 200 200" style="width:100%;max-width:220px;display:block;margin:0 auto 10px">
+        <path d="M100 190 L20 90 A115 115 0 0 1 180 90 Z" fill="#14261a" stroke="#2d5" stroke-width="1"/>
+        ${dots}
+      </svg>
+      <div class="mu s11" style="margin-bottom:4px;text-transform:uppercase;font-weight:700">Whiff Rate by Pitch</div>
+      ${whiffHtml || '<div class="mu s12">No swing-and-miss data yet</div>'}`;
+  } catch (e) { el.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0;color:var(--red-l)">Could not load spray data</div>'; }
+}
+
+// ── Player profile: matchup history ──
+function populateMatchupOpponents(teamName) {
+  const sel = document.getElementById('sc-matchup-opp');
+  const others = Object.keys(allStats?.rosters || {}).filter(t => t !== teamName);
+  let opts = '<option value="">Select opponent…</option>';
+  others.forEach(t => {
+    (allStats.rosters[t] || []).forEach(p => {
+      opts += `<option value="${escHtml(t)}||${escHtml(p.name)}">${escHtml(p.name)} (${escHtml(t)})</option>`;
+    });
+  });
+  sel.innerHTML = opts;
+  sel.value = '';
+}
+
+async function loadMatchupHistory() {
+  const val = document.getElementById('sc-matchup-opp').value;
+  const body = document.getElementById('sc-matchup-body');
+  if (!val || !currentKey) { body.innerHTML = ''; return; }
+  const [oppTeam, oppName] = val.split('||');
+  const [curTeam, curName] = currentKey.split('||');
+  const isCurrentPitcher = !currentIsHitter;
+  const pitcherTeam = isCurrentPitcher ? curTeam : oppTeam;
+  const pitcherName = isCurrentPitcher ? curName : oppName;
+  const batterTeam  = isCurrentPitcher ? oppTeam : curTeam;
+  const batterName  = isCurrentPitcher ? oppName : curName;
+  body.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0">Loading…</div>';
+  try {
+    const r = await fetch(`${RAIL}/api/matchup/${encodeURIComponent(pitcherTeam)}/${encodeURIComponent(pitcherName)}/${encodeURIComponent(batterTeam)}/${encodeURIComponent(batterName)}`, { signal: AbortSignal.timeout(8000) });
+    const pitches = await r.json();
+    if (!pitches.length) { body.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0">No charted matchups yet</div>'; return; }
+    const byDate = {};
+    pitches.forEach(p => { const d = p.gameDate || '—'; (byDate[d] = byDate[d] || []).push(p); });
+    body.innerHTML = Object.entries(byDate).map(([date, ps]) => `
+      <div style="margin-bottom:10px">
+        <div class="mu s11" style="font-weight:700;margin-bottom:4px">${date === '—' ? '—' : fmtDate(date)} ${ps[0].opponent ? '· ' + escHtml(ps[0].opponent) : ''}</div>
+        ${ps.map(p => `<div class="flex-bc" style="padding:4px 0;border-bottom:1px solid var(--g7);font-size:12px">
+          <span>${escHtml(p.pitchType || '—')} ${p.velo ? p.velo + ' mph' : ''}</span>
+          <span class="mu">${p.balls}-${p.strikes}</span>
+          <span class="mu">${escHtml((p.result || '').replace(/_/g, ' '))}</span>
+        </div>`).join('')}
+      </div>`).join('');
+  } catch (e) { body.innerHTML = '<div class="mu s12" style="text-align:center;padding:8px 0;color:var(--red-l)">Could not load matchup</div>'; }
+}
+
+// ══════════════════════════════════════════════════
+//  GAME REPORT
+// ══════════════════════════════════════════════════
+async function loadPastSessions() {
+  const el = document.getElementById('chart-past-sessions');
+  if (!el) return;
+  el.innerHTML = '<div class="loading"><div class="spin"></div></div>';
+  try {
+    const r = await fetch(`${RAIL}/api/charting-sessions`, { signal: AbortSignal.timeout(10000) });
+    const sessions = await r.json();
+    if (!sessions.length) { el.innerHTML = '<div class="mu s12" style="padding:8px 0">No charted sessions yet</div>'; return; }
+    el.innerHTML = sessions.map(s => `
+      <div class="team-btn" onclick="openChartReport(${s.id})">
+        <div><div class="tn">${s.homeAway === 'home' ? 'vs' : '@'} ${escHtml(s.opponent || '—')}</div><div class="ta">${fmtDate(s.date)} · ${escHtml(s.type)}</div></div>
+      </div>`).join('');
+  } catch (e) { el.innerHTML = '<div class="mu s12" style="padding:8px 0;color:var(--red-l)">Could not load sessions</div>'; }
+}
+
+async function openChartReport(sessionId) {
+  navStack.push({ view: 'v-chart', title: 'Chart', sub: '', back: false });
+  showView('v-chart-report');
+  setHdr('Game Report', 'Loading…', true);
+  reportFilterPitcher = null; reportFilterType = null;
+  document.getElementById('rpt-pitcher-filter-wrap').style.display = 'none';
+  const body = document.getElementById('rpt-body');
+  body.innerHTML = '<div class="loading"><div class="spin"></div></div>';
+  try {
+    const r = await fetch(`${RAIL}/api/charting-sessions/${sessionId}/pitches`, { signal: AbortSignal.timeout(12000) });
+    const data = await r.json();
+    if (!data.session) throw new Error('no session');
+    reportData = data;
+    const s = data.session;
+    const label = `${s.homeAway === 'home' ? 'vs' : '@'} ${s.opponent || '—'} · ${fmtDate(s.date)} · ${s.type}`;
+    document.getElementById('rpt-session-label').textContent = label;
+    setHdr('Game Report', label, true);
+
+    const pitcherKeys = [...new Set(data.pitches.map(p => p.pitcherTeam + '||' + p.pitcherName))];
+    if (pitcherKeys.length > 1) {
+      const sel = document.getElementById('rpt-pitcher-filter');
+      sel.innerHTML = '<option value="">All Pitchers</option>' + pitcherKeys.map(k => {
+        const [team, name] = k.split('||');
+        return `<option value="${escHtml(k)}">${escHtml(name)} (${team === 'Batavia Muckdogs' ? 'Batavia' : escHtml(team)})</option>`;
+      }).join('');
+      document.getElementById('rpt-pitcher-filter-wrap').style.display = '';
+    } else if (pitcherKeys.length === 1) {
+      reportFilterPitcher = pitcherKeys[0];
+    }
+    renderReportBody();
+  } catch (e) {
+    body.innerHTML = '<div class="mu s12" style="text-align:center;padding:24px 0;color:var(--red-l)">Could not load session report</div>';
+  }
+}
+
+function onReportPitcherChange() {
+  reportFilterPitcher = document.getElementById('rpt-pitcher-filter').value || null;
+  reportFilterType = null;
+  renderReportBody();
+}
+
+function reportFilteredPitches() {
+  if (!reportData) return [];
+  let ps = reportData.pitches;
+  if (reportFilterPitcher) {
+    const [team, name] = reportFilterPitcher.split('||');
+    ps = ps.filter(p => p.pitcherTeam === team && p.pitcherName === name);
+  }
+  return ps;
+}
+function reportTypeFilteredPitches() {
+  const ps = reportFilteredPitches();
+  return reportFilterType ? ps.filter(p => (p.pitchType || 'UNK') === reportFilterType) : ps;
+}
+
+function pitchColor(type) {
+  if (PITCH_COLOR_MAP[type]) return PITCH_COLOR_MAP[type];
+  let h = 0;
+  const s = type || 'UNK';
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360}, 70%, 55%)`;
+}
+
+function clusterPitches(pitches, radius) {
+  const clusters = [];
+  pitches.forEach(p => {
+    if (p.zoneX == null || p.zoneY == null) return;
+    let target = null;
+    for (const c of clusters) {
+      const dx = c.x - p.zoneX, dy = c.y - p.zoneY;
+      if (Math.sqrt(dx * dx + dy * dy) <= radius) { target = c; break; }
+    }
+    if (target) target.count++;
+    else clusters.push({ x: p.zoneX, y: p.zoneY, count: 1 });
+  });
+  return clusters;
+}
+
+function renderReportZoneChart(pitches) {
+  const byType = {};
+  pitches.forEach(p => { const t = p.pitchType || 'UNK'; (byType[t] = byType[t] || []).push(p); });
+  const types = Object.keys(byType);
+  let allClusters = [];
+  types.forEach(t => {
+    clusterPitches(byType[t], ZONE_CLUSTER_RADIUS).forEach(c =>
+      allClusters.push({ x: c.x * 200, y: c.y * 240, count: c.count, type: t, color: pitchColor(t) })
+    );
+  });
+  const PIXEL_EPS = 7;
+  for (let i = 0; i < allClusters.length; i++) {
+    for (let j = 0; j < i; j++) {
+      const a = allClusters[i], b = allClusters[j];
+      if (a.type === b.type) continue;
+      const dx = a.x - b.x, dy = a.y - b.y;
+      if (Math.sqrt(dx * dx + dy * dy) < PIXEL_EPS) {
+        const angle = ((i * 137.5) % 360) * Math.PI / 180;
+        a.x += Math.cos(angle) * PIXEL_EPS; a.y += Math.sin(angle) * PIXEL_EPS;
+      }
+    }
+  }
+  const dots = allClusters.map(c => {
+    let s = `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="9" fill="${c.color}" fill-opacity="0.88" stroke="#000" stroke-width="0.5"/>`;
+    if (c.count > 1) s += `<text x="${c.x.toFixed(1)}" y="${(c.y + 3.5).toFixed(1)}" font-size="9" font-weight="700" fill="#fff" text-anchor="middle">${c.count}</text>`;
+    return s;
+  }).join('');
+  return `<svg viewBox="0 0 200 240" style="width:100%;max-width:260px;display:block;margin:0 auto">
+    <rect x="0" y="0" width="200" height="240" fill="#111" rx="8"/>
+    <rect x="40" y="30" width="120" height="180" fill="none" stroke="#555" stroke-width="1.5"/>
+    <line x1="80" y1="30" x2="80" y2="210" stroke="#333"/><line x1="120" y1="30" x2="120" y2="210" stroke="#333"/>
+    <line x1="40" y1="90" x2="160" y2="90" stroke="#333"/><line x1="40" y1="150" x2="160" y2="150" stroke="#333"/>
+    ${dots}
+  </svg>`;
+}
+
+function renderTypeChips(pitches) {
+  const byType = {};
+  pitches.forEach(p => { const t = p.pitchType || 'UNK'; byType[t] = (byType[t] || 0) + 1; });
+  const total = pitches.length || 1;
+  return Object.entries(byType).sort((a, b) => b[1] - a[1]).map(([t, count]) => {
+    const active = reportFilterType === t;
+    const color = pitchColor(t);
+    return `<button class="btn btn-sm" style="background:${active ? color : 'var(--g7)'};color:${active ? '#000' : 'var(--white)'};border:1px solid ${color}" onclick="selectReportType('${t}')">
+      <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;margin-right:4px"></span>${escHtml(t)} ${(count / total * 100).toFixed(0)}%
+    </button>`;
+  }).join('');
+}
+function selectReportType(t) {
+  reportFilterType = reportFilterType === t ? null : t;
+  renderReportBody();
+}
+
+function computeRateStats(pitches) {
+  const total = pitches.length;
+  const firstPitch = pitches.filter(p => p.balls === 0 && p.strikes === 0);
+  const fpStrikes = firstPitch.filter(p => p.result !== 'ball');
+  const strikeResults = ['called_strike', 'swinging_strike', 'foul', 'in_play'];
+  const strikes = pitches.filter(p => strikeResults.includes(p.result));
+  const swings = pitches.filter(p => ['swinging_strike', 'foul', 'in_play'].includes(p.result));
+  const whiffs = pitches.filter(p => p.result === 'swinging_strike');
+  return {
+    total,
+    firstPitchStrikePct: firstPitch.length ? +(fpStrikes.length / firstPitch.length * 100).toFixed(1) : null,
+    strikePct: total ? +(strikes.length / total * 100).toFixed(1) : null,
+    whiffPct: swings.length ? +(whiffs.length / swings.length * 100).toFixed(1) : null,
+  };
+}
+function computeWhiffByType(pitches) {
+  const seenByType = {}, whiffByType = {};
+  pitches.forEach(p => {
+    const t = p.pitchType || 'UNK';
+    seenByType[t] = (seenByType[t] || 0) + 1;
+    if (p.result === 'swinging_strike') whiffByType[t] = (whiffByType[t] || 0) + 1;
+  });
+  return Object.entries(seenByType).map(([type, seen]) => ({
+    type, seen, whiffs: whiffByType[type] || 0,
+    whiffPct: seen ? +((whiffByType[type] || 0) / seen * 100).toFixed(1) : 0,
+  }));
+}
+function computeUsageByType(pitches) {
+  const total = pitches.length;
+  const byType = {};
+  pitches.forEach(p => { const t = p.pitchType || 'UNK'; byType[t] = (byType[t] || 0) + 1; });
+  return Object.entries(byType)
+    .map(([type, count]) => ({ type, count, usagePct: total ? +(count / total * 100).toFixed(1) : 0 }))
+    .sort((a, b) => b.count - a.count);
+}
+function computeResultBreakdown(pitches) {
+  const byType = {};
+  pitches.forEach(p => { const t = p.pitchType || 'UNK'; (byType[t] = byType[t] || []).push(p); });
+  return Object.entries(byType).map(([type, ps]) => {
+    const total = ps.length;
+    const pct = n => total ? +(n / total * 100).toFixed(1) : 0;
+    const count = pred => ps.filter(pred).length;
+    return {
+      type, total,
+      ballPct: pct(count(p => p.result === 'ball')),
+      calledStrikePct: pct(count(p => p.result === 'called_strike')),
+      swingingStrikePct: pct(count(p => p.result === 'swinging_strike')),
+      foulPct: pct(count(p => p.result === 'foul')),
+      groundoutPct: pct(count(p => p.result === 'in_play' && p.battedBallType === 'ground_ball' && p.inPlayOutcome === 'out')),
+      flyoutPct: pct(count(p => p.result === 'in_play' && p.battedBallType === 'fly_ball' && p.inPlayOutcome === 'out')),
+      lineoutPct: pct(count(p => p.result === 'in_play' && p.battedBallType === 'line_drive' && p.inPlayOutcome === 'out')),
+      popoutPct: pct(count(p => p.result === 'in_play' && p.battedBallType === 'popup' && p.inPlayOutcome === 'out')),
+      hitPct: pct(count(p => p.result === 'in_play' && p.inPlayOutcome === 'hit')),
+      strikeoutPct: pct(count(p => p.strikes === 2 && (p.result === 'called_strike' || p.result === 'swinging_strike'))),
+      walkPct: pct(count(p => p.balls === 3 && p.result === 'ball')),
+    };
+  });
+}
+function computeTendencyGrid(pitches) {
+  const counts = {}, byTypeCount = {};
+  pitches.forEach(p => {
+    if (p.balls == null || p.strikes == null) return;
+    const ck = `${p.balls}-${p.strikes}`;
+    counts[ck] = (counts[ck] || 0) + 1;
+    const key = (p.pitchType || 'UNK') + '|' + ck;
+    byTypeCount[key] = (byTypeCount[key] || 0) + 1;
+  });
+  const countKeys = Object.keys(counts).sort();
+  const types = [...new Set(pitches.map(p => p.pitchType || 'UNK'))];
+  return {
+    countKeys, types,
+    cell: (t, ck) => { const total = counts[ck] || 0; const n = byTypeCount[t + '|' + ck] || 0; return total ? Math.round(n / total * 100) : 0; },
+  };
+}
+function renderTendencyGrid(pitches) {
+  const g = computeTendencyGrid(pitches);
+  if (!g.countKeys.length) return '<div class="mu s12">No count data yet</div>';
+  return `<div class="scroll-x"><table class="pmx"><thead><tr><th>Type</th>${g.countKeys.map(ck => `<th>${ck}</th>`).join('')}</tr></thead>
+    <tbody>${g.types.map(t => `<tr><td style="color:${pitchColor(t)}">${escHtml(t)}</td>${g.countKeys.map(ck => `<td>${g.cell(t, ck)}%</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+function renderPitchLog(pitches) {
+  if (!pitches.length) return '<div class="mu s12" style="padding:8px 0">No pitches</div>';
+  return pitches.slice().reverse().map(p => `
+    <div class="flex-bc" style="padding:7px 0;border-bottom:1px solid var(--g7);font-size:12px;gap:6px">
+      <span class="mu" style="width:34px;flex-shrink:0">${p.half === 'top' ? 'T' : 'B'}${p.inning ?? ''}</span>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.batterName)}</span>
+      <span class="mu" style="width:32px;flex-shrink:0;text-align:center">${p.balls}-${p.strikes}</span>
+      <span style="width:34px;flex-shrink:0;text-align:center;font-weight:700;color:${pitchColor(p.pitchType || 'UNK')}">${escHtml(p.pitchType || '—')}</span>
+      <span class="mu" style="width:42px;flex-shrink:0;text-align:center">${p.velo ? p.velo + 'mph' : ''}</span>
+      <span class="mu" style="width:78px;flex-shrink:0;text-align:right">${escHtml((p.result || '').replace(/_/g, ' '))}</span>
+    </div>`).join('');
+}
+
+function renderReportBody() {
+  const pitcherPitches = reportFilteredPitches();
+  const typedPitches = reportTypeFilteredPitches();
+  const body = document.getElementById('rpt-body');
+  if (!pitcherPitches.length) {
+    body.innerHTML = '<div class="empty"><h3>No pitches</h3><p>Nothing charted for this session/filter yet.</p></div>';
+    return;
+  }
+  const rates = computeRateStats(pitcherPitches);
+  const whiffByType = computeWhiffByType(pitcherPitches);
+  const usage = computeUsageByType(pitcherPitches);
+  const resultBreakdown = computeResultBreakdown(pitcherPitches);
+
+  body.innerHTML = `
+    <div class="card" style="margin-bottom:12px"><div class="card-body">
+      ${renderReportZoneChart(typedPitches)}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${renderTypeChips(pitcherPitches)}</div>
+      ${reportFilterType ? `<button class="btn btn-xs btn-s mt8" onclick="selectReportType('${reportFilterType}')">Clear pitch-type filter</button>` : ''}
+    </div></div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      ${chip('Pitches', rates.total)}
+      ${chip('FPS%', rates.firstPitchStrikePct != null ? rates.firstPitchStrikePct + '%' : '—')}
+      ${chip('Strike%', rates.strikePct != null ? rates.strikePct + '%' : '—')}
+      ${chip('Whiff%', rates.whiffPct != null ? rates.whiffPct + '%' : '—')}
+    </div>
+
+    <div class="divlabel">Usage &amp; Whiff by Pitch Type</div>
+    <div class="card mb12"><div class="card-body">
+      ${usage.map(u => {
+        const w = whiffByType.find(x => x.type === u.type);
+        return `<div class="flex-bc" style="padding:6px 0;border-bottom:1px solid var(--g7)">
+          <span style="font-weight:700;color:${pitchColor(u.type)}">${escHtml(u.type)}</span>
+          <span class="mu s12">${u.usagePct}% usage · ${w ? w.whiffPct : 0}% whiff</span>
+        </div>`;
+      }).join('')}
+    </div></div>
+
+    <div class="divlabel">Result % by Pitch Type</div>
+    <div class="scroll-x mb12"><table class="pmx"><thead><tr>
+      <th>Type</th><th>Ball</th><th>C.Str</th><th>Whiff</th><th>Foul</th><th>GO</th><th>FO</th><th>LO</th><th>PO</th><th>Hit</th><th>K</th><th>BB</th>
+    </tr></thead><tbody>
+      ${resultBreakdown.map(r => `<tr>
+        <td style="color:${pitchColor(r.type)};font-weight:700">${escHtml(r.type)}</td>
+        <td>${r.ballPct}%</td><td>${r.calledStrikePct}%</td><td>${r.swingingStrikePct}%</td><td>${r.foulPct}%</td>
+        <td>${r.groundoutPct}%</td><td>${r.flyoutPct}%</td><td>${r.lineoutPct}%</td><td>${r.popoutPct}%</td>
+        <td>${r.hitPct}%</td><td>${r.strikeoutPct}%</td><td>${r.walkPct}%</td>
+      </tr>`).join('')}
+    </tbody></table></div>
+
+    <div class="divlabel">Tendency by Count</div>
+    <div class="mb12">${renderTendencyGrid(pitcherPitches)}</div>
+
+    <div class="divlabel">Pitch Log ${reportFilterType ? '· ' + escHtml(reportFilterType) : ''}</div>
+    ${renderPitchLog(typedPitches)}
+  `;
+}
+
 // ── PWA ──
 if('serviceWorker' in navigator){
-  const sw=`const C='dd-v16';
+  const sw=`const C='dd-v22';
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll([self.location.href])));self.skipWaiting();});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim();});
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(fetch(e.request).then(r=>{const cl=r.clone();caches.open(C).then(c=>c.put(e.request,cl));return r;}).catch(()=>caches.match(e.request)));});`;
